@@ -19,9 +19,15 @@ def separate_vocals(audio: Path, out_dir: Path, device: str = "mps") -> Path:
 
     既に分離済みなら再実行しない(3分の曲で1分前後かかるため)。
     """
-    vocals = out_dir / MODEL / audio.stem / "vocals.wav"
+    # demucs は拡張子を落とした名前で出力するため、同じ基底名の mp3 と wav が
+    # 同じ場所に書き込んでしまいます。測る対象が入れ替わっても気づけないので、
+    # 拡張子まで含めた作業ディレクトリに分けます。
+    work = out_dir / audio.suffix.lstrip(".")
+    vocals = work / MODEL / audio.stem / "vocals.wav"
     if vocals.exists():
         return vocals
+
+    out_dir = work
 
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [

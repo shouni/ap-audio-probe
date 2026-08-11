@@ -22,9 +22,15 @@ gsutil cp gs://ap-music/music/<job_id>/recipe.json recipes/<name>.json
 .venv/bin/python -m probe audio/<name>.wav recipes/<name>.json
 ```
 
-`audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
+```bash
+.venv/bin/pytest                                                     # 回帰テスト(0.2秒)
+.venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
+.venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
+.venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)
+.venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
+```
 
-自動テストはまだありません。
+`audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
 
 ## mp3 と master.wav のどちらを測るか
 
@@ -48,7 +54,17 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 
 **閾値は絶対値ではなく曲ごとの相対。** `vocals.py` は歌唱セクションの RMS 中央値を基準にし、そこから `VOCAL_MARGIN_DB`（12dB）以内、または有声率 20% 超を「声あり」とします。demucs は伴奏を完全には除去しきれず微量が漏れるうえ、曲ごとにレベルが違うため、絶対値で切ると曲を跨いで機能しません。
 
+この2つの条件は役割が違い、**どちらも外せません**。陽性対照（`scripts/calibrate.py`）で測ったところ、RMS の 12dB ルールが届くのは混入量 −12dB 付近までで、**−18dB を拾っているのは有声率のルール**です。検出できる下限は歌唱に対して約 −18dB、それ以下は demucs の分離漏れ（−45dB 前後）に埋もれて区別できません。閾値をいじっても超えられない手法上の限界なので、感度を上げたければ分離の質を上げる必要があります。
+
 音源がレシピの宣言尺より短いことは普通に起きます（Lyria が Outro を畳む）。`vocals.py` は各区間を実尺で clamp し、`SectionStats.truncated` で不足を報告します。
+
+### 歌詞照合（lyrics.py）
+
+**期待した歌詞を `initial_prompt` に渡してはいけません。** 認識率は上がりますが、モデルが与えた歌詞に引きずられ、落ちた行まで書き起こされます。検証したい対象を答えとして渡すことになります。
+
+**`to_kana` は英数字を落とします。** 日本語 ASR は混ざった英語を安定して聞き取れず、実測で `Split the role` は一貫して `Speed the road` になりました。残すと歌われている行まで不一致になります。日本語を含まない行は `LineCheck.verifiable` が偽になり、判定対象外として報告されます。
+
+**一致率は最長の連続一致ではなく一致ブロックの合計。** 連続一致だと両端の小さな誤認識で分断されます（`境界をここに引け` → `妖怪よ ここに行け` で 27% まで低下）。合計に変えて 73% になりました。閾値 `COVERAGE_THRESHOLD`（45%）は実測で校正しており、歌われた行 73〜100% と歌われていない行 14〜29% の間に収まります。この分離は `test_threshold_sits_between_the_two_groups` で固定してあります。
 
 ## 方針
 
@@ -56,5 +72,6 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 
 ## 既知の問題
 
-- `README.md` は lyric-video のテンプレートが貼られたままで、内容がこのプロジェクトの説明になっていません（未追跡）。
-- ap-comp 側の Audio Check は `master.wav` ではなく mp3 を、しかもデコーダの padding を含んだまま測っています（尺が 2,304 サンプル＝MP3 フレーム2つぶん長く出る）。報告される末尾無音などがその分ずれます。
+- **`--device mps` が既定でフォールバックがない。** Apple Silicon 以外では `--device cpu` の明示が要ります。
+- **ap-comp のマスターは真正ピークが −1.0 dBTP を超えている。** 手元で測った5曲すべてで超過し、うち3曲は 0.0 dBTP 以上でした。サンプルピークは −1.00 dBFS ちょうどに抑えられているので、リミッターがサンプルピーク基準で、サンプル間のピークを見ていないと思われます。配信時のロッシー変換で歪む恐れがあり、**ap-comp の masterer 側の課題**です。Integrated LUFS の揃いは 0.6 LU と良好でした。
+- ap-comp 側の Audio Check は `mastered.Web`（mp3）を測っています（`internal/adapters/lyria.go:244`）。デコーダの padding を含むため尺が 2,304 サンプル＝MP3 フレーム2つぶん長く出ます。ただし実測した限りどの閾値も余裕のほうが桁で大きく、判定が反転するケースは見つかっていません。あわせて `peak_amplitude: 0.867` が wav（0.891）とも mp3（0.903）とも一致しない理由が未解明です。

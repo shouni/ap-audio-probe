@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ap-comp のインスト指定セクションは、プロンプト冒頭に必ずこの語が入る。
@@ -32,10 +32,32 @@ class Recipe:
     title: str
     tempo: int
     sections: list[Section]
+    # lyrics はセクション名から、そこで歌われるはずの行を引くための対応表です。
+    # インスト曲では空になります。
+    lyrics: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def declared_duration(self) -> float:
         return max(s.end for s in self.sections) if self.sections else 0.0
+
+
+def parse_lyrics(text: str) -> dict[str, list[str]]:
+    """`[Verse]` のようなタグ行で区切られた歌詞を、セクション名ごとの行に割る。
+
+    タグは sections[].name と完全一致する前提です(ap-comp 側の取り決め)。
+    """
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1]
+            sections.setdefault(current, [])
+        elif current is not None:
+            sections[current].append(line)
+    return sections
 
 
 def load(path: Path) -> Recipe:
@@ -50,4 +72,11 @@ def load(path: Path) -> Recipe:
         for s in data["sections"]
     ]
     sections.sort(key=lambda s: s.start)
-    return Recipe(title=data["title"], tempo=int(data["tempo"]), sections=sections)
+
+    lyrics_block = (data.get("lyrics") or {}).get("lyrics", "")
+    return Recipe(
+        title=data["title"],
+        tempo=int(data["tempo"]),
+        sections=sections,
+        lyrics=parse_lyrics(lyrics_block),
+    )
