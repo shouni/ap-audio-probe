@@ -23,9 +23,11 @@ gsutil cp gs://ap-music/music/<job_id>/recipe.json recipes/<name>.json
 ```
 
 ```bash
-.venv/bin/pytest                                              # 判定ロジックの回帰テスト(0.1秒)
+.venv/bin/pytest                                                     # 回帰テスト(0.2秒)
 .venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
-.venv/bin/python scripts/calibrate.py audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
+.venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
+.venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)
+.venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
 ```
 
 `audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
@@ -56,6 +58,14 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 
 音源がレシピの宣言尺より短いことは普通に起きます（Lyria が Outro を畳む）。`vocals.py` は各区間を実尺で clamp し、`SectionStats.truncated` で不足を報告します。
 
+### 歌詞照合（lyrics.py）
+
+**期待した歌詞を `initial_prompt` に渡してはいけません。** 認識率は上がりますが、モデルが与えた歌詞に引きずられ、落ちた行まで書き起こされます。検証したい対象を答えとして渡すことになります。
+
+**`to_kana` は英数字を落とします。** 日本語 ASR は混ざった英語を安定して聞き取れず、実測で `Split the role` は一貫して `Speed the road` になりました。残すと歌われている行まで不一致になります。日本語を含まない行は `LineCheck.verifiable` が偽になり、判定対象外として報告されます。
+
+**一致率は最長の連続一致ではなく一致ブロックの合計。** 連続一致だと両端の小さな誤認識で分断されます（`境界をここに引け` → `妖怪よ ここに行け` で 27% まで低下）。合計に変えて 73% になりました。閾値 `COVERAGE_THRESHOLD`（45%）は実測で校正しており、歌われた行 73〜100% と歌われていない行 14〜29% の間に収まります。この分離は `test_threshold_sits_between_the_two_groups` で固定してあります。
+
 ## 方針
 
 **判定は出すが、止めない。** 違反を見つけても失敗扱いにはせず、数字と根拠を並べて人間に返します。生成品質の問題はプロンプト調整と手動での作り直しで対処する運用のため、自動ゲートは入れません。
@@ -63,6 +73,5 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 ## 既知の問題
 
 - **`--device mps` が既定でフォールバックがない。** Apple Silicon 以外では `--device cpu` の明示が要ります。
-- **ASR による行落ち検査が未着手。** `faster-whisper` は依存に入れてありますが使っていません。実際に噛まれている失敗モード（7行セクションで1行落ちる）はこちらで、`longest_internal_silence` という間接指標でしか見えていません。分離済みの stem を渡せば認識率を稼げます。
-- **曲間の LUFS 比較がない。** ap-comp は1曲ずつしか採点しないため、シリーズとして配信するときの音量の揃いは誰も見ていません。
+- **ap-comp のマスターは真正ピークが −1.0 dBTP を超えている。** 手元で測った5曲すべてで超過し、うち3曲は 0.0 dBTP 以上でした。サンプルピークは −1.00 dBFS ちょうどに抑えられているので、リミッターがサンプルピーク基準で、サンプル間のピークを見ていないと思われます。配信時のロッシー変換で歪む恐れがあり、**ap-comp の masterer 側の課題**です。Integrated LUFS の揃いは 0.6 LU と良好でした。
 - ap-comp 側の Audio Check は `mastered.Web`（mp3）を測っています（`internal/adapters/lyria.go:244`）。デコーダの padding を含むため尺が 2,304 サンプル＝MP3 フレーム2つぶん長く出ます。ただし実測した限りどの閾値も余裕のほうが桁で大きく、判定が反転するケースは見つかっていません。あわせて `peak_amplitude: 0.867` が wav（0.891）とも mp3（0.903）とも一致しない理由が未解明です。
