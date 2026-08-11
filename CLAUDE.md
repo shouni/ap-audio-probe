@@ -28,6 +28,7 @@ gsutil cp gs://ap-music/music/<job_id>/recipe.json recipes/<name>.json
 .venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
 .venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)
 .venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
+.venv/bin/python -m probe.spectrum audio/x.wav recipes/x.json        # セクション別の帯域
 ```
 
 `audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
@@ -69,6 +70,14 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 ## 方針
 
 **判定は出すが、止めない。** 違反を見つけても失敗扱いにはせず、数字と根拠を並べて人間に返します。生成品質の問題はプロンプト調整と手動での作り直しで対処する運用のため、自動ゲートは入れません。
+
+### 帯域計測（spectrum.py）
+
+ap-comp の masterer が持つ定数（`acrossover=split=4000 10000`、`acompressor=threshold=0.025` ＝ −32.0dBFS）を検証するための計測です。
+
+**セクション全体の RMS を圧縮の判断に使ってはいけません。** 36秒を平均した値はコンプレッサの検出器が見ている量とは別物で、全区間が「閾値以下」に見えてしまいます。`_short_term_dbfs` が 50ms 窓（masterer の attack=5ms / release=80ms に対応）で短時間レベルを出し、その95パーセンタイルと閾値超過時間の割合を判断に使います。
+
+5曲で測った結果、**サビの短時間レベルは −29.1〜−31.4dBFS で全曲が閾値を超え、閾値超過時間は 10〜43%**。Verse は 1〜9% でほぼ素通りです。masterer の設計意図（サビだけ抑え、Verse は通す）は corpus 全体で成立しています。ただしこれは**処理後の測定なので「効いている」ことしか言えず、「必要である」ことの証明にはなりません**。プロンプト側の高域指示だけで足りるかは、処理前の take がないと判定できません。
 
 ## 既知の問題
 
