@@ -22,9 +22,13 @@ gsutil cp gs://ap-music/music/<job_id>/recipe.json recipes/<name>.json
 .venv/bin/python -m probe audio/<name>.wav recipes/<name>.json
 ```
 
-`audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
+```bash
+.venv/bin/pytest                                              # 判定ロジックの回帰テスト(0.1秒)
+.venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
+.venv/bin/python scripts/calibrate.py audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
+```
 
-自動テストはまだありません。
+`audio/` `recipes/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
 
 ## mp3 と master.wav のどちらを測るか
 
@@ -48,6 +52,8 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 
 **閾値は絶対値ではなく曲ごとの相対。** `vocals.py` は歌唱セクションの RMS 中央値を基準にし、そこから `VOCAL_MARGIN_DB`（12dB）以内、または有声率 20% 超を「声あり」とします。demucs は伴奏を完全には除去しきれず微量が漏れるうえ、曲ごとにレベルが違うため、絶対値で切ると曲を跨いで機能しません。
 
+この2つの条件は役割が違い、**どちらも外せません**。陽性対照（`scripts/calibrate.py`）で測ったところ、RMS の 12dB ルールが届くのは混入量 −12dB 付近までで、**−18dB を拾っているのは有声率のルール**です。検出できる下限は歌唱に対して約 −18dB、それ以下は demucs の分離漏れ（−45dB 前後）に埋もれて区別できません。閾値をいじっても超えられない手法上の限界なので、感度を上げたければ分離の質を上げる必要があります。
+
 音源がレシピの宣言尺より短いことは普通に起きます（Lyria が Outro を畳む）。`vocals.py` は各区間を実尺で clamp し、`SectionStats.truncated` で不足を報告します。
 
 ## 方針
@@ -56,5 +62,7 @@ ap-comp は同じディレクトリに `audio.mp3`（192kbps）と `master.wav` 
 
 ## 既知の問題
 
-- `README.md` は lyric-video のテンプレートが貼られたままで、内容がこのプロジェクトの説明になっていません（未追跡）。
-- ap-comp 側の Audio Check は `master.wav` ではなく mp3 を、しかもデコーダの padding を含んだまま測っています（尺が 2,304 サンプル＝MP3 フレーム2つぶん長く出る）。報告される末尾無音などがその分ずれます。
+- **`--device mps` が既定でフォールバックがない。** Apple Silicon 以外では `--device cpu` の明示が要ります。
+- **ASR による行落ち検査が未着手。** `faster-whisper` は依存に入れてありますが使っていません。実際に噛まれている失敗モード（7行セクションで1行落ちる）はこちらで、`longest_internal_silence` という間接指標でしか見えていません。分離済みの stem を渡せば認識率を稼げます。
+- **曲間の LUFS 比較がない。** ap-comp は1曲ずつしか採点しないため、シリーズとして配信するときの音量の揃いは誰も見ていません。
+- ap-comp 側の Audio Check は `mastered.Web`（mp3）を測っています（`internal/adapters/lyria.go:244`）。デコーダの padding を含むため尺が 2,304 サンプル＝MP3 フレーム2つぶん長く出ます。ただし実測した限りどの閾値も余裕のほうが桁で大きく、判定が反転するケースは見つかっていません。あわせて `peak_amplitude: 0.867` が wav（0.891）とも mp3（0.903）とも一致しない理由が未解明です。
