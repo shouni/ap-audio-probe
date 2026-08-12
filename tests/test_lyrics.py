@@ -66,26 +66,22 @@ def test_threshold_sits_between_the_two_groups():
 
 
 def test_check_reports_missing_lines_per_section():
+    chorus = Section("Chorus", 0.0, 30.0, "[Chorus] Focus on the lyrics.")
     recipe = Recipe(
         title="テスト",
         tempo=126,
-        sections=[Section("Chorus", 0.0, 30.0, "[Chorus] Focus on the lyrics.")],
+        sections=[chorus],
         lyrics={"Chorus": ["削ぎ落としたノイズを捨てろ", "夏の終わりに手を振った"]},
     )
-    segments = [(1.0, 29.0, HEARD)]
 
-    result = check(segments, recipe)
+    result = check([(chorus, HEARD)], recipe)
 
     assert len(result) == 1
     assert [l.line for l in result[0].missing] == ["夏の終わりに手を振った"]
 
 
 def test_instrumental_sections_without_lyrics_are_skipped():
-    recipe = Recipe(
-        title="テスト",
-        tempo=126,
-        sections=[Section("Intro", 0.0, 8.0, "[Instrumental Intro] Instruments only.")],
-        lyrics={},
-    )
+    intro = Section("Intro", 0.0, 8.0, "[Instrumental Intro] Instruments only.")
+    recipe = Recipe(title="テスト", tempo=126, sections=[intro], lyrics={})
 
-    assert check([(0.0, 8.0, "")], recipe) == []
+    assert check([(intro, "")], recipe) == []
