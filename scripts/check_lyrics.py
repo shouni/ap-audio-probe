@@ -32,11 +32,11 @@ def main() -> None:
     print("[1/3] ボーカル stem を分離中 ...")
     vocals = separate_vocals(args.audio, args.out, device=args.device)
 
-    print(f"[2/3] 書き起こし中 ({args.model}) ... 初回はモデルの取得に時間がかかります")
-    segments = lyrics_mod.transcribe(vocals, model_name=args.model)
+    print(f"[2/3] セクションごとに書き起こし中 ({args.model}) ... 初回はモデルの取得に時間がかかります")
+    transcripts = lyrics_mod.transcribe(vocals, rec, model_name=args.model)
 
     print("[3/3] 歌詞と突き合わせ中 ...")
-    print(lyrics_mod.render(lyrics_mod.check(segments, rec)))
+    print(lyrics_mod.render(lyrics_mod.check(transcripts, rec)))
 
 
 if __name__ == "__main__":
