@@ -11,11 +11,14 @@ import pytest
 import soundfile as sf
 
 from probe.recipe import Recipe, Section
-from probe.vocals import analyse
+from probe.vocals import BOUNDARY_BLEED_SECONDS, analyse
 
 SR = 22050
 INSTRUMENTAL_PROMPT = "[Instrumental Interlude] Instruments only — no lead vocal."
 SUNG_PROMPT = "[Verse] Focus on the lyrics marked [Verse]."
+
+# 食い込みはフレーム単位(FRAME_SECONDS)でしか切れないため、その丸めぶんを許容する。
+FRAME_TOLERANCE = 0.06
 
 
 def _recipe() -> Recipe:
@@ -82,6 +85,73 @@ def test_sung_sections_never_count_as_violations(stem_path):
 
     assert all(s.section.instrumental for s in report.violations)
     assert report.sung_reference_dbfs == pytest.approx(-23.0, abs=1.0)
+
+
+def _write_stem_with_bleed(path, bleed_seconds: float, *, at_end: bool = True, seconds: float = 24.0):
+    """Interlude (12-16s) の端に、歌唱と同じレベルの声が食い込んだ stem を書く。"""
+    t = np.arange(int(seconds * SR)) / SR
+    tone = np.sin(2 * np.pi * 220.0 * t).astype(np.float32)
+    envelope = np.full_like(tone, 0.001)
+    for section in _recipe().sections:
+        if section.instrumental:
+            continue
+        envelope[int(section.start * SR) : int(section.end * SR)] = 0.1
+
+    if at_end:
+        lo, hi = 16.0 - bleed_seconds, 16.0
+    else:
+        lo, hi = 12.0, 12.0 + bleed_seconds
+    envelope[int(lo * SR) : int(hi * SR)] = 0.1
+
+    sf.write(path, tone * envelope, SR)
+    return path
+
+
+def test_pickup_into_the_end_of_an_instrumental_section_is_not_flagged(stem_path):
+    """次の歌唱セクションの歌い出しが食い込むのは弱起で、指示違反ではない。"""
+    _write_stem_with_bleed(stem_path, 0.9, at_end=True)
+
+    report = analyse(stem_path, _recipe())
+
+    interlude = next(s for s in report.stats if s.section.name == "Interlude")
+    assert report.violations == []
+    assert interlude.tail_bleed == pytest.approx(0.9, abs=FRAME_TOLERANCE)
+    # 食い込みを外した中身は、分離漏れ程度まで下がっている。
+    assert interlude.rms_dbfs < report.sung_reference_dbfs - 30
+
+
+def test_held_note_at_the_start_of_an_instrumental_section_is_not_flagged(stem_path):
+    """前の歌唱セクションの歌尾が伸びる場合も同じ。"""
+    _write_stem_with_bleed(stem_path, 0.9, at_end=False)
+
+    report = analyse(stem_path, _recipe())
+
+    interlude = next(s for s in report.stats if s.section.name == "Interlude")
+    assert report.violations == []
+    assert interlude.head_bleed == pytest.approx(0.9, abs=FRAME_TOLERANCE)
+
+
+def test_bleed_longer_than_the_limit_is_still_a_violation(stem_path):
+    """上限を超える長さは食い込みではなく、区間の中身として違反に上げる。"""
+    _write_stem_with_bleed(stem_path, BOUNDARY_BLEED_SECONDS + 0.5, at_end=True)
+
+    report = analyse(stem_path, _recipe())
+
+    interlude = next(s for s in report.stats if s.section.name == "Interlude")
+    assert [s.section.name for s in report.violations] == ["Interlude"]
+    assert interlude.bleed == 0.0  # 途中まで外して数字を濁らせない
+
+
+def test_voice_in_the_middle_is_still_a_violation(stem_path):
+    """境界に接していない声は、短くても混入として扱う。"""
+    _write_stem(stem_path, {"Intro": 0.001, "Verse": 0.1, "Interlude": 0.001, "Chorus": 0.1})
+    data, _ = sf.read(stem_path, dtype="float32")
+    data[int(13.5 * SR) : int(14.4 * SR)] *= 100.0  # Interlude の中ほどだけ持ち上げる
+    sf.write(stem_path, data, SR)
+
+    report = analyse(stem_path, _recipe())
+
+    assert [s.section.name for s in report.violations] == ["Interlude"]
 
 
 def test_short_audio_is_clamped_and_reported(stem_path):

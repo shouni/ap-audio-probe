@@ -1,7 +1,7 @@
 """歌詞の行が実際に歌われたかを ASR で確かめる。
 
-Lyria は奇数行のセクションで1行落とすことがあり、今それを見ているのは
-「内部の無音が長いか」という間接的な指標だけです。書き起こして突き合わせれば
+Lyria は奇数行のセクションで1行落とすことがあります。ap-comp 側でそれを見ているのは
+「内部の無音が長いか」という間接的な指標だけですが、書き起こして突き合わせれば
 どの行が消えたのかまで分かります。
 
 期待値は低めに見てください。大音量の伴奏を伴う日本語歌唱の認識精度は出ないため、
@@ -15,17 +15,25 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
+import numpy as np
 import pykakasi
 
 from .recipe import Recipe, Section
+from .vocals import FRAME_FLOOR_DB, FRAME_SECONDS, frame_levels, sung_reference
 
 MODEL = "large-v3"
 
 # whisper が内部で使うサンプリングレート。切り出しの単位もこれに揃えます。
 SAMPLE_RATE = 16000
 
-# 期待した行の読みが、書き起こしの中にこの割合以上ひと続きで現れれば「歌われた」と見なす。
-# 認識が荒れるため厳しくすると全行が落ちたことになります。
+# 声の前後に残す余白。子音の立ち上がりや語尾の余韻を切り落とさない程度に取ります。
+CLIP_PAD_SECONDS = 0.2
+
+# これを超える無音を、whisper に幻聴の兆候として扱わせます(transcribe を参照)。
+HALLUCINATION_SILENCE_SECONDS = 2.0
+
+# 期待した行の読みが、書き起こしの中にこの割合以上見つかれば「歌われた」と見なす
+# (数え方は _coverage を参照)。認識が荒れるため、厳しくすると全行が落ちたことになります。
 COVERAGE_THRESHOLD = 0.45
 
 _kks = pykakasi.kakasi()
@@ -73,6 +81,28 @@ class SectionCheck:
         return [l for l in self.lines if not l.sung]
 
 
+def trim_to_voice(clip: np.ndarray, floor_dbfs: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """切り出した区間の、声が鳴っている範囲だけに詰める。
+
+    狙いは、声が一度も floor を超えない区間で空を返すことです。そこは本当に歌われて
+    いないのに、渡せば whisper が幻聴を返します(実測では分離漏れだけの Outro が
+    「ありがとうございました。」になりました)。行が丸ごと落ちたセクションはまさに
+    この形なので、幻聴で埋まると検査そのものが意味を失います。
+
+    声のある区間で端を詰めること自体は、幻聴を止めません(transcribe を参照)。
+    """
+    levels = frame_levels(clip, sample_rate)
+    voiced = np.flatnonzero(levels > floor_dbfs)
+    if voiced.size == 0:
+        return clip[:0]
+
+    frame = int(FRAME_SECONDS * sample_rate)
+    pad = int(CLIP_PAD_SECONDS * sample_rate)
+    lo = max(0, int(voiced[0]) * frame - pad)
+    hi = min(len(clip), (int(voiced[-1]) + 1) * frame + pad)
+    return clip[lo:hi]
+
+
 def transcribe(
     vocals_wav: Path,
     recipe: Recipe,
@@ -91,6 +121,14 @@ def transcribe(
     歌われている Verse の6行が落ちたと報告されました。区間ごとに切れば同じ音源で
     全行が出ます。ついでに書き起こしとセクションの対応が時刻の重なり判定でなく
     切り出しそのもので決まるため、境界付近の取りこぼしもなくなります。
+
+    区間ごとに切っても幻聴は残ります。最後の半端な窓が内部で無音に埋められるため、
+    そこで同じことが起きます(歌が 161s で終わる Chorus 2 の書き起こしが
+    「ご視聴ありがとうございました」で終わり、最終行が落ちたと報告されました)。
+    止まったのは `hallucination_silence_threshold` だけです。末尾の無音を詰める、
+    `vad_filter=True`、`no_speech_threshold` を下げるはいずれも効きませんでした。
+    このパラメータは `word_timestamps=True` のときだけ働くぶん遅くなりますが、
+    幻聴が混じったまま行落ちを判定するよりは確実です。
     """
     from faster_whisper import WhisperModel
     from faster_whisper.audio import decode_audio
@@ -98,13 +136,17 @@ def transcribe(
     audio = decode_audio(str(vocals_wav), sampling_rate=SAMPLE_RATE)
     model = WhisperModel(model_name, device=device, compute_type="int8")
 
+    # 無音の判定は vocals.py と同じ物差し(歌唱区間からの相対)で行います。
+    floor = sung_reference(audio, SAMPLE_RATE, recipe) - FRAME_FLOOR_DB
+
     results = []
     for section in recipe.sections:
         if not recipe.lyrics.get(section.name):
             continue
 
         clip = audio[int(section.start * SAMPLE_RATE):int(section.end * SAMPLE_RATE)]
-        if clip.size == 0:  # 音源がレシピの宣言尺より短い場合
+        clip = trim_to_voice(clip, floor)
+        if clip.size == 0:  # 音源がレシピの宣言尺より短い、または声が無い
             results.append((section, ""))
             continue
 
@@ -115,6 +157,8 @@ def transcribe(
             language="ja",
             vad_filter=False,
             condition_on_previous_text=False,
+            word_timestamps=True,
+            hallucination_silence_threshold=HALLUCINATION_SILENCE_SECONDS,
         )
         results.append((section, " ".join(s.text.strip() for s in segments)))
     return results
