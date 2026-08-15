@@ -17,7 +17,7 @@ MODEL = "htdemucs"
 def separate_vocals(audio: Path, out_dir: Path, device: str = "mps") -> Path:
     """audio からボーカル stem を作り、その wav のパスを返す。
 
-    既に分離済みなら再実行しない(3分の曲で1分前後かかるため)。
+    既に分離済みなら再実行しない(MPS でも3分の曲に20秒程度かかるため)。
     """
     # demucs は拡張子を落とした名前で出力するため、同じ基底名の mp3 と wav が
     # 同じ場所に書き込んでしまいます。測る対象が入れ替わっても気づけないので、

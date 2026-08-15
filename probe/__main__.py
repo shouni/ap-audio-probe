@@ -30,8 +30,13 @@ def _render(report: Report) -> str:
             verdict = "★声あり" if report.has_vocals(s) else "クリーン"
         else:
             verdict = "-"
+        notes = []
+        if s.bleed:
+            notes.append(f"食い込み {s.bleed:.1f}s 除外")
         if s.truncated:
-            verdict += f" (尺不足 {s.section.end - s.clamped_end:.1f}s)"
+            notes.append(f"尺不足 {s.section.end - s.clamped_end:.1f}s")
+        if notes:
+            verdict += f" ({'、'.join(notes)})"
         lines.append(
             f"{s.section.name:<10} {kind:<6} {span:<16} "
             f"{s.rms_dbfs:>9.1f}dB {s.peak_dbfs:>7.1f}dB {s.active_ratio:>6.0%}  {verdict}"
@@ -41,8 +46,10 @@ def _render(report: Report) -> str:
         "-" * 76,
         f"歌唱セクションの基準値: {report.sung_reference_dbfs:.1f} dBFS "
         f"(この値から 12dB 以内、または有声率 20% 超で「声あり」)",
-        "",
     ]
+    if any(s.bleed for s in report.stats):
+        lines.append("※ 「食い込み」は隣の歌唱セクションから端に届いた声(弱起や歌尾)です。")
+    lines.append("")
     if report.violations:
         names = "、".join(s.section.name for s in report.violations)
         lines.append(f"⚠ インスト指定なのに声が乗っている: {names}")
