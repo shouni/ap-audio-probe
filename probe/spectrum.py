@@ -1,12 +1,15 @@
 """セクション別の帯域バランスを測る。
 
-ap-comp の masterer は 4-10kHz だけを圧縮しています。その定数は「サビの当該帯域が
--27dBFS 前後、Verse は -35dBFS 前後」という実測から決められましたが、根拠となった
-測定は残っていません。ここで同じ量を曲を跨いで測り直します。
+ap-comp の masterer は 4-10kHz だけを圧縮しています。その定数の根拠は「サビの当該
+帯域が -27dBFS 前後、Verse は -35dBFS 前後」という実測でしたが、測定そのものは
+残っていませんでした。ここで同じ量を曲を跨いで測り直します。
 
 測れるのは処理後の音だけです。コンプレッサがどれだけ効いたかは処理前と比べないと
-分かりませんが、「処理後もサビが閾値を大きく超えている」なら、効きが足りていない
-ことは処理後だけで判断できます。
+分かりません。「効いている」ことは言えても「必要である」ことの証明にはなりません。
+
+この計測で 11曲を測った結果、閾値が固定値では曲ごとにばらつくと分かり、ap-comp は
+2026-08-15 に曲ごとの相対へ変えました(`c2d6894`)。COMPRESSOR_THRESHOLD_DBFS を
+参照。
 
     python -m probe.spectrum audio/foo.wav recipes/foo.json
 """
@@ -23,22 +26,23 @@ from scipy.signal import butter, sosfiltfilt
 
 from . import recipe as recipe_mod
 from .recipe import Recipe, Section
+from .vocals import SILENCE_DBFS, dbfs
 
 # masterer.go の acrossover=split=4000 10000 に合わせた帯域です。
 CROSSOVER_HZ = (4000.0, 10000.0)
 
-# masterer.go の acompressor=threshold=0.025 を dBFS にした値です。
-# サビがこれを超えると圧縮がかかり、Verse は素通りする設計になっています。
+# masterer.go の acompressor=threshold=0.025 を dBFS にした値です。サビがこれを超えると
+# 圧縮がかかり、Verse は素通りする、という設計になっています。
+#
+# ただしこれは 2026-08-15 より前の固定値です。ap-comp はその日に、曲自身の 4-10kHz
+# 平均から trebleThresholdOffsetDB(+2.5dB)上へ置く相対の閾値に変えました。probe 側は
+# 未対応なので、それ以降に生成された曲では「圧縮域」の列は実際にかかった量ではありません。
 COMPRESSOR_THRESHOLD_DBFS = 20.0 * np.log10(0.025)
 
-# masterer.go のコメントが根拠にしている実測値。
+# 相対化より前、masterer.go のコメントが根拠にしていた実測値。11曲を測り直したところ
+# サビの短時間レベルは -29.3〜-31.4dBFS で、この前提より低いところに集まっていました。
 ASSUMED_CHORUS_DBFS = -27.0
 ASSUMED_VERSE_DBFS = -35.0
-
-
-def _dbfs(x: np.ndarray) -> float:
-    rms = float(np.sqrt(np.mean(np.square(x)))) if x.size else 0.0
-    return 20.0 * np.log10(rms) if rms > 0 else -120.0
 
 
 def _band(x: np.ndarray, sr: int, low: float | None, high: float | None) -> np.ndarray:
@@ -91,10 +95,10 @@ def analyse(audio_path: Path, recipe: Recipe) -> list[BandLevels]:
         levels.append(
             BandLevels(
                 section=section,
-                low=_dbfs(bands["low"][start:end]),
-                mid=_dbfs(bands["mid"][start:end]),
-                high=_dbfs(bands["high"][start:end]),
-                mid_peak=float(np.percentile(short_term, 95)) if short_term.size else -120.0,
+                low=dbfs(bands["low"][start:end]),
+                mid=dbfs(bands["mid"][start:end]),
+                high=dbfs(bands["high"][start:end]),
+                mid_peak=float(np.percentile(short_term, 95)) if short_term.size else SILENCE_DBFS,
                 over_ratio=float(np.mean(short_term > COMPRESSOR_THRESHOLD_DBFS))
                 if short_term.size
                 else 0.0,

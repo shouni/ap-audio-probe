@@ -27,15 +27,13 @@ def separate_vocals(audio: Path, out_dir: Path, device: str = "mps") -> Path:
     if vocals.exists():
         return vocals
 
-    out_dir = work
-
-    out_dir.mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable, "-m", "demucs",
         "--two-stems", "vocals",
         "-n", MODEL,
         "-d", device,
-        "-o", str(out_dir),
+        "-o", str(work),
         str(audio),
     ]
     subprocess.run(cmd, check=True)
