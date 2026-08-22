@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import recipe as recipe_mod
 from .separate import separate_vocals
-from .vocals import Report, analyse
+from .vocals import ACTIVE_RATIO_THRESHOLD, VOCAL_MARGIN_DB, Report, analyse
 
 
 def _render(report: Report) -> str:
@@ -45,7 +45,8 @@ def _render(report: Report) -> str:
     lines += [
         "-" * 76,
         f"歌唱セクションの基準値: {report.sung_reference_dbfs:.1f} dBFS "
-        f"(この値から 12dB 以内、または有声率 20% 超で「声あり」)",
+        f"(この値から {VOCAL_MARGIN_DB:.0f}dB 以内、"
+        f"または有声率 {ACTIVE_RATIO_THRESHOLD:.0%} 超で「声あり」)",
     ]
     if any(s.bleed for s in report.stats):
         lines.append("※ 「食い込み」は隣の歌唱セクションから端に届いた声(弱起や歌尾)です。")

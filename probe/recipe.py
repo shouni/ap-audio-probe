@@ -18,10 +18,6 @@ class Section:
     prompt: str
 
     @property
-    def duration(self) -> float:
-        return self.end - self.start
-
-    @property
     def instrumental(self) -> bool:
         """レシピ自身が「楽器のみ」と指示しているセクションか。"""
         return INSTRUMENTAL_MARKER in self.prompt

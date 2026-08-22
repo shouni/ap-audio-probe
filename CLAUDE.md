@@ -23,7 +23,7 @@ gsutil cp gs://ap-music/music/<job_id>/recipe.json recipes/<name>.json
 ```
 
 ```bash
-.venv/bin/pytest                                                     # 回帰テスト(1秒以内)
+.venv/bin/pytest                                                     # 回帰テスト(数秒)
 .venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
 .venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
 .venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)

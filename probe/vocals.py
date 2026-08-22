@@ -10,26 +10,31 @@ import soundfile as sf
 
 from .recipe import Recipe, Section
 
-# 歌唱セクションの中央値からこの幅に収まっていれば、そこに声が乗っていると見なす。
-# demucs は伴奏を完全には除去しきれず微量が漏れるため、絶対値ではなく
-# 「その曲の歌唱区間と比べてどうか」で判断する。
+# 判定はすべて「その曲の歌唱区間と比べてどうか」で決めます。demucs は伴奏を完全には
+# 除去しきれず微量が漏れ、その量も曲ごとのレベルも揃わないため、絶対値で切ると曲を
+# 跨いで機能しません。基準は sung_reference()。
+
+# 区間の RMS が基準値からこの幅に収まっていれば、そこに声が乗っていると見なす。
 VOCAL_MARGIN_DB = 12.0
 
-# 有声フレームと見なす下限。同じく歌唱区間からの相対で決める。
+# 基準値からこの幅だけ下を、有声フレームと見なす床にする。
 FRAME_FLOOR_DB = 20.0
 FRAME_SECONDS = 0.05
 
+# 有声フレームがこの割合を超えても「声あり」とする。RMS の条件だけでは歌唱より 12dB
+# 小さい混入までしか届かず、-18dB を拾っているのはこちらです(scripts/calibrate.py)。
+ACTIVE_RATIO_THRESHOLD = 0.20
+
 # 歌い出しは境界の手前から始まり(弱起)、歌尾は境界を越えて伸びます。この長さまでは
-# 隣からの食い込みと見なし、インスト区間の中身から外して測ります。実測では
-# 「ステートレスな夜に」の Interlude(78-92s)で声が立つのは最後の 0.9 秒だけ
-# なのに、区間平均が -50.9dB から -30.0dB へ跳ねて違反として上がりました。
-# 上限は、区間の大半を占める声まで見逃さないために要ります。
+# 隣からの食い込みと見なし、インスト区間の中身から外して測ります。実測で見た食い込みは
+# 0.9 秒(156 BPM の約2拍)で、そこに倍の余裕を取りつつ、フレーズ1つぶんには届かない
+# 長さとしてこの上限を置いています。
 BOUNDARY_BLEED_SECONDS = 2.0
 
 SILENCE_DBFS = -120.0
 
 
-def _dbfs(x: np.ndarray) -> float:
+def dbfs(x: np.ndarray) -> float:
     rms = float(np.sqrt(np.mean(np.square(x)))) if x.size else 0.0
     return 20.0 * np.log10(rms) if rms > 0 else SILENCE_DBFS
 
@@ -46,10 +51,7 @@ def frame_levels(x: np.ndarray, sample_rate: int) -> np.ndarray:
 
 
 def sung_reference(mono: np.ndarray, sample_rate: int, recipe: Recipe) -> float:
-    """歌唱セクションの RMS 中央値。曲ごとに違うレベルを揃えるための物差し。
-
-    絶対値で切ると曲を跨いで機能しないため、判定はすべてこの値からの相対で決めます。
-    """
+    """歌唱セクションの RMS 中央値。判定がすべて相対で見る、その曲自身の物差し。"""
     seconds = len(mono) / sample_rate
     levels = []
     for section in recipe.sections:
@@ -57,7 +59,7 @@ def sung_reference(mono: np.ndarray, sample_rate: int, recipe: Recipe) -> float:
             continue
         chunk = mono[int(section.start * sample_rate) : int(min(section.end, seconds) * sample_rate)]
         if chunk.size:
-            levels.append(_dbfs(chunk))
+            levels.append(dbfs(chunk))
     return float(np.median(levels)) if levels else SILENCE_DBFS
 
 
@@ -100,9 +102,13 @@ class Report:
         return self.recipe.declared_duration - self.audio_seconds
 
     def has_vocals(self, s: SectionStats) -> bool:
+        """区間の平均か、声の立っている時間の長さか、どちらかが基準に届けば声あり。
+
+        役割が違うのでどちらも外せません。根拠は ACTIVE_RATIO_THRESHOLD を参照。
+        """
         return (
             s.rms_dbfs > self.sung_reference_dbfs - VOCAL_MARGIN_DB
-            or s.active_ratio > 0.20
+            or s.active_ratio > ACTIVE_RATIO_THRESHOLD
         )
 
     @property
@@ -158,7 +164,7 @@ def analyse(vocals_wav: Path, recipe: Recipe) -> Report:
             SectionStats(
                 section=section,
                 clamped_end=end,
-                rms_dbfs=_dbfs(core),
+                rms_dbfs=dbfs(core),
                 peak_dbfs=20.0 * np.log10(peak) if peak > 0 else SILENCE_DBFS,
                 active_ratio=float(np.mean(core_db > floor)) if core_db.size else 0.0,
                 head_bleed=head * FRAME_SECONDS,
