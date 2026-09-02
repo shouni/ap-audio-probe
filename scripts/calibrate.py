@@ -34,7 +34,7 @@ def main() -> None:
     if not target.instrumental:
         raise SystemExit(f"{target.name} はインスト指定ではありません")
 
-    print(f"元の音源を分離中 ...")
+    print("元の音源を分離中 ...")
     clean_stem = separate_vocals(args.audio, args.out, device=args.device)
 
     baseline = analyse(clean_stem, rec)

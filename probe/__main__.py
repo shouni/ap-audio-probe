@@ -62,7 +62,7 @@ def _render(report: Report) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="probe", description=__doc__)
     parser.add_argument("audio", type=Path, help="音源 (mp3/wav)")
-    parser.add_argument("recipe", type=Path, help="ap-comp の recipe.json")
+    parser.add_argument("recipe", type=Path, help="recipe.json")
     parser.add_argument("--out", type=Path, default=Path("out"), help="stem の出力先")
     parser.add_argument("--device", default="mps", help="demucs の実行デバイス")
     args = parser.parse_args()
@@ -70,7 +70,7 @@ def main() -> None:
     print(f"[1/2] ボーカル stem を分離中 ({args.device}) ...")
     vocals = separate_vocals(args.audio, args.out, device=args.device)
 
-    print(f"[2/2] セクション別に測定中 ...\n")
+    print("[2/2] セクション別に測定中 ...\n")
     print(_render(analyse(vocals, recipe_mod.load(args.recipe))))
 
 
