@@ -1,4 +1,4 @@
-"""ap-comp のレシピ JSON からセクション構成を読む。"""
+"""レシピ JSON からセクション構成を読む。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ap-comp のインスト指定セクションは、プロンプト冒頭に必ずこの語が入る。
+# インスト指定セクションは、プロンプト冒頭に必ずこの語が入る(生成側のプロンプト規約)。
 INSTRUMENTAL_MARKER = "Instruments only"
 
 
@@ -40,7 +40,7 @@ class Recipe:
 def parse_lyrics(text: str) -> dict[str, list[str]]:
     """`[Verse]` のようなタグ行で区切られた歌詞を、セクション名ごとの行に割る。
 
-    タグは sections[].name と完全一致する前提です(ap-comp 側の取り決め)。
+    タグは sections[].name と完全一致する前提です(生成側の取り決め)。
     """
     sections: dict[str, list[str]] = {}
     current: str | None = None
