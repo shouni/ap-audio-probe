@@ -27,18 +27,30 @@ def _recipe(seconds: float = 4.0) -> Recipe:
     )
 
 
-@pytest.mark.parametrize("freq,loudest", [(500.0, "low"), (6000.0, "mid"), (15000.0, "high")])
+@pytest.mark.parametrize(
+    "freq,loudest",
+    [(500.0, "low"), (5000.0, "presence"), (8000.0, "treble"), (15000.0, "air")],
+)
 def test_energy_lands_in_the_expected_band(tmp_path, freq, loudest):
-    """acrossover と同じ 4k/10k で切れていることを、単一の正弦波で確かめる。"""
+    """acrossover と同じ 6k/10k で切れていることを、単一の正弦波で確かめる。
+
+    4-6kHz は 2026-09-05 に圧縮対象から外れた帯域です。表示だけの分割なので
+    acrossover には現れませんが、圧縮域の列へ混ざっていないことはここで押さえます。
+    """
     levels = analyse(_write(tmp_path / "t.wav", freq, 0.5), _recipe())[0]
 
-    bands = {"low": levels.low, "mid": levels.mid, "high": levels.high}
+    bands = {
+        "low": levels.low,
+        "presence": levels.presence,
+        "treble": levels.treble,
+        "air": levels.air,
+    }
     assert max(bands, key=bands.get) == loudest
 
 
 def test_short_term_level_tracks_the_signal():
     t = np.arange(SR) / SR
-    quiet = 0.01 * np.sin(2 * np.pi * 6000.0 * t)
+    quiet = 0.01 * np.sin(2 * np.pi * 8000.0 * t)
 
     levels = _short_term_dbfs(quiet.astype(np.float32), SR)
 
@@ -48,16 +60,16 @@ def test_short_term_level_tracks_the_signal():
 
 def test_over_ratio_is_zero_when_the_band_is_quiet(tmp_path):
     """圧縮の閾値に届かない素材で「圧縮がかかる」と出てはいけない。"""
-    levels = analyse(_write(tmp_path / "t.wav", 6000.0, 0.005), _recipe())[0]
+    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.005), _recipe())[0]
 
-    assert levels.mid_peak < COMPRESSOR_THRESHOLD_DBFS
+    assert levels.treble_peak < COMPRESSOR_THRESHOLD_DBFS
     assert levels.over_ratio == 0.0
 
 
 def test_over_ratio_is_high_when_the_band_is_loud(tmp_path):
-    levels = analyse(_write(tmp_path / "t.wav", 6000.0, 0.5), _recipe())[0]
+    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.5), _recipe())[0]
 
-    assert levels.mid_peak > COMPRESSOR_THRESHOLD_DBFS
+    assert levels.treble_peak > COMPRESSOR_THRESHOLD_DBFS
     assert levels.over_ratio == pytest.approx(1.0, abs=0.05)
 
 
@@ -71,6 +83,6 @@ def test_sections_beyond_the_audio_are_dropped(tmp_path):
         ],
     )
 
-    levels = analyse(_write(tmp_path / "t.wav", 6000.0, 0.2, seconds=2.0), recipe)
+    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.2, seconds=2.0), recipe)
 
     assert [lv.section.name for lv in levels] == ["Chorus"]
