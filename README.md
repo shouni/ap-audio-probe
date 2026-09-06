@@ -70,11 +70,21 @@ python3 -m venv .venv
 ```bash
 JOB=<job_id>
 
-gsutil cp gs://<bucket>/music/$JOB/master.wav  audio/$JOB.wav
-gsutil cp gs://<bucket>/music/$JOB/recipe.json recipes/$JOB.json
+gsutil cp gs://<bucket>/music/$JOB/master.wav      audio/$JOB.wav
+gsutil cp gs://<bucket>/music/$JOB/recipe.json     recipes/$JOB.json
+gsutil cp gs://<bucket>/music/$JOB/assessment.json assessments/$JOB.json  # 任意
 
 .venv/bin/python -m probe audio/$JOB.wav recipes/$JOB.json
 ```
+
+ジョブのディレクトリには 4 つ置かれます。
+
+| オブジェクト | 中身 |
+|---|---|
+| `audio.<ext>` | Web 配信用。マスタリングが走れば mp3（192kbps）、走らなければ Lyria が申告した型 |
+| `master.wav` | 配信用の非圧縮マスター。マスタリング未適用なら**存在しません** |
+| `recipe.json` | レシピ。区間の唯一の基準 |
+| `assessment.json` | 生成時の実測値と講評（[生成側の記録との突き合わせ](#-生成側の記録との突き合わせ)で使います） |
 
 ---
 
@@ -150,7 +160,9 @@ Outro      インスト   160-174.3s           -44.5dB   -25.5dB     4%  クリ�
 
 ## 🎤 歌詞の行落ち検査
 
-Lyria は奇数行のセクションで1行落とすことがあります。分離したボーカル stem を faster-whisper で書き起こし、レシピの歌詞と行単位で突き合わせます。
+Lyria は歌詞量と尺が噛み合わないと行を落とします。分離したボーカル stem を faster-whisper で書き起こし、レシピの歌詞と行単位で突き合わせます。落とし方はモデルで変わり、lyria-3.5 では**1つのフックを2回歌って別の行を落とす**形も実測しています（09-04 生成の曲で、Chorus 1 の冒頭が 2 回・後半が 1 行欠落）。
+
+**生成側の歌詞照合とは見ているものが違います。** あちらが比べるのはモデルが返した譜面の行数で、鳴った音は見ていません（ap-music の `domain/lyric_fidelity.go` に「これは鳴った音の書き起こしではありません」と明記があります）。**譜面どおりに歌えなかった失敗を捕まえられるのは、実際の音を書き起こすこちらだけです。**
 
 ```bash
 .venv/bin/python scripts/check_lyrics.py audio/<name>.wav recipes/<name>.json
@@ -219,6 +231,26 @@ BS.1770 の Integrated LUFS・True Peak・LRA を並べ、**曲間の差が 1.0 
 
 > ⚠ `probe.spectrum` の閾値は固定の −32.0dBFS のままです。**08-15 より後に生成された曲では、「圧縮域」の列は実際にかかった量ではありません。**
 > 基準の帯域も 09-05 に 4-10kHz から 6-10kHz へ動いているため、**その前後の曲を同じ列で比べることもできません。**
+
+---
+
+## 🧷 生成側の記録との突き合わせ
+
+生成側はジョブごとに `assessment.json` を残します。中身は生成時に測った実測値と、音を聴かせたモデルの講評（歌詞の聞き取りやすさ・構成一致・進行・ボーカルバランスの4軸と指摘）です。
+
+```bash
+.venv/bin/python -m probe.assessment audio/<name>.wav assessments/<name>.json
+```
+
+**測っている対象が違います。**生成側が測るのは Web 配信用の mp3、こちらが測るのは `master.wav` です。値が一致しないのは正常で、この計測の目的は**符号化で説明の付く差と、付かない差を分けること**です。説明が付くものには但し書きが出ます。
+
+| 項目 | 差の説明 |
+|---|---|
+| 尺 | mp3 デコーダの padding のぶん生成側が 52ms 長い（2,304 サンプル＝MP3 フレーム2つ） |
+| `peak_amplitude` | 生成側は**チャンネルを平均した波形**でピークを取ります。ステレオ差のぶん必ず各チャンネルのピークより低く出ます（同じ mp3 で ch 別 0.903 / ch 平均 **0.867**） |
+| 真正ピーク・LUFS | どちらもチャンネルごとの規格値なので、そのまま比較できます |
+
+測り方は生成側の `inspector.go` に合わせて再実装しています（チャンネル平均の1波形、2次バンドパス1段、50ms 窓の無音判定）。`probe.spectrum` の4次バターワースとは別物で、混ぜると差の出どころが分からなくなります。**記録の `4-10kHz` は Inspector の帯域で、マスタリングが圧縮する帯域（2026-09-05 以降は 6-10kHz）とは別です。**
 
 ---
 

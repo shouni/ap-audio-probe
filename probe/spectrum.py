@@ -177,6 +177,15 @@ def render(title: str, levels: list[BandLevels]) -> str:
         lines.append(
             f"4-6k(無処理) サビ {cpr:.1f}dB / Verse {vpr:.1f}dB / 差 {cpr - vpr:.1f}dB"
         )
+
+    # Chorus / Verse 以外の歌唱区間（8 セクション構成の Bridge など）。要約の 2 行は
+    # 「サビだけ抑える」という設計の確認なので、そこへ混ぜずに別に並べます。
+    others = [lv for lv in sung if "Chorus" not in lv.section.name and "Verse" not in lv.section.name]
+    if others:
+        lines.append(
+            "その他の歌唱区間: "
+            + " / ".join(f"{lv.section.name} {lv.treble:.1f}dB" for lv in others)
+        )
     return "\n".join(lines)
 
 
