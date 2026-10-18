@@ -37,6 +37,7 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 .venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)
 .venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
 .venv/bin/python -m probe.spectrum audio/x.wav recipes/x.json        # セクション別の帯域
+.venv/bin/python -m probe.balance  audio/x.wav recipes/x.json        # 歌唱区間の「声 − 伴奏」
 .venv/bin/python -m probe.assessment audio/x.wav assessments/x.json  # 生成側の記録と突き合わせ
 ```
 
