@@ -7,7 +7,8 @@
     python -m probe.assessment audio/foo.wav assessments/foo.json
 
 **測っている対象が違います。** 生成側が測るのは Web 配信用の mp3
-（`Inspect(mastered.Web)`）で、こちらが測るのは配信用マスターの wav です。
+（`Inspect(mastered.Web)`。真正ピークと LUFS だけは、`loudness_from_master` が true なら
+`InspectMaster` で wav を測った値）で、こちらが測るのは配信用マスターの wav です。
 差はその 2 つの差であって、どちらかが間違っているわけではありません。
 説明が付く差（下の PADDING / peak_amplitude の注記）とそうでない差を分けるのが
 この計測の目的です。
