@@ -324,7 +324,7 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
         f" / マスタリング {'適用' if record.mastered else '未適用'}",
         f"要約: {record.summary}",
         "",
-        cell("項目", 18) + cell("生成側(mp3)", 14, right=True)
+        cell("項目", 18) + cell("生成側", 14, right=True)
         + cell(f"手元({audio_name})", 16, right=True) + cell("差", 10, right=True),
         "-" * 76,
     ]

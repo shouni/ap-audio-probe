@@ -1,15 +1,11 @@
 """セクション別の帯域バランスを測る。
 
-生成側のマスタリング処理は高域だけを圧縮しています。その定数の根拠は「サビの当該
-帯域が -27dBFS 前後、Verse は -35dBFS 前後」という実測でしたが、測定そのものは
-残っていませんでした。ここで同じ量を曲を跨いで測り直します。
+生成側のマスタリング処理は 6-10kHz だけを圧縮しています。その定数がサビと Verse で
+どう働いているかを、曲を跨いで測ります。閾値は assessment.json から読みます
+（「圧縮域」と「圧縮量」の列の説明は BandLevels の前のコメントを参照）。
 
 測れるのは処理後の音だけです。コンプレッサがどれだけ効いたかは処理前と比べないと
 分かりません。「効いている」ことは言えても「必要である」ことの証明にはなりません。
-
-この計測で 11曲を測った結果、閾値が固定値では曲ごとにばらつくと分かり、生成側は
-2026-08-15 に曲ごとの相対へ変えました。その閾値は assessment.json から読みます
-（「圧縮域」の列の説明は BandLevels の前のコメントを参照）。
 
     python -m probe.spectrum audio/foo.wav recipes/foo.json
 """
@@ -59,12 +55,6 @@ LOW_PUNCH_HZ = (40.0, 120.0)
 # で、この差はマスタリングではなく生成で決まっています。合否の線は置いていません。
 LOW_PUNCH_PERCENTILES = (95, 50)
 
-# 相対化より前、マスタリング処理が根拠にしていた実測値。11曲を測り直したところ
-# サビの短時間レベルは -29.3〜-31.4dBFS で、この前提より低いところに集まっていました。
-# どちらも当時の 4-10kHz についての数字で、6-10kHz とは別の量です。
-ASSUMED_CHORUS_DBFS = -27.0
-ASSUMED_VERSE_DBFS = -35.0
-
 
 def _band(x: np.ndarray, sr: int, low: float | None, high: float | None) -> np.ndarray:
     nyq = sr / 2.0
@@ -88,8 +78,10 @@ DETECTOR_HOP_SECONDS = 0.01
 # 音量合わせのゲインを足し、master.wav の上で引き直した線で数えます。
 #
 # 以前はマスタリング処理の固定値（acompressor=threshold=0.025、-32.0dBFS）で数えていました。
-# 生成側は 2026-08-15 に閾値を曲ごとの相対へ変えており、それ以降の曲ではこの列が実際に
-# かかった量を表していませんでした。曲ごとの閾値はログにしか残らなかったため、2026-10-29 に
+# 11曲を測るとサビの超過時間が 11〜43% と 4 倍ばらついたため、生成側は 2026-08-15 に閾値を
+# 曲ごとの相対へ変えました（同じ 11曲でばらつきは 31pt → 18pt。いずれも当時の 4-10kHz での
+# 数字で、今の 6-10kHz とは比べられません）。それ以降の曲では、固定値で数えたこの列は
+# 実際にかかった量を表していませんでした。曲ごとの閾値はログにしか残らなかったため、2026-10-29 に
 # 生成側の記録へ載せる変更を入れ、ここはそれを読むだけにしています。記録の無い曲では列を
 # 出しません。推測した閾値で数えると、読む人が実際の量と取り違えます。
 #
@@ -106,6 +98,8 @@ DETECTOR_HOP_SECONDS = 0.01
 
 # マスタリング処理の acompressor=ratio=4。圧縮量の逆算にだけ使います。
 COMPRESSOR_RATIO = 4.0
+
+
 @dataclass
 class BandLevels:
     section: Section
@@ -227,10 +221,7 @@ def render(title: str, levels: list[BandLevels], threshold_dbfs: float | None = 
         c = float(np.mean([lv.treble for lv in chorus]))
         v = float(np.mean([lv.treble for lv in verse]))
         cp = float(np.mean([lv.treble_peak for lv in chorus]))
-        lines.append(
-            f"サビ {c:.1f}dB / Verse {v:.1f}dB / 差 {c - v:.1f}dB"
-            f"  (マスタリングの前提: {ASSUMED_CHORUS_DBFS:.0f} / {ASSUMED_VERSE_DBFS:.0f}、当時は 4-10k)"
-        )
+        lines.append(f"6-10k サビ {c:.1f}dB / Verse {v:.1f}dB / 差 {c - v:.1f}dB")
         if threshold_dbfs is None:
             lines.append(
                 f"サビの短時間レベル {cp:.1f}dB / 閾値は不明"
