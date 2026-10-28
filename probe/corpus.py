@@ -8,7 +8,7 @@
 生成側の高域コンプの設計は「サビだけ踏み、Verse は素通り」なので、この 2 列をモードごとに
 並べたものが、閾値のオフセット（masterer.go の trebleThresholdOffsetDB）を詰める材料になります。
 超過時間（spectrum の「圧縮域」）ではなく量を並べるのは、時間だけでは瞬間的な山と
-持続する圧縮を区別できないためです（spectrum.gain_reduction の前のコメント）。
+持続する圧縮を区別できないためです（spectrum.BandLevels の前のコメント）。
 
 1 曲ずつの計測（loudness / spectrum / balance）は、それだけでは「この値は普通か」に
 答えられません。2026-10-28 に sparkle_rock の低域のアタック感が低いと分かったのも、
