@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 import soundfile as sf
 
+from probe.assessment import load as load_assessment
 from probe.recipe import Recipe, Section
-from probe.spectrum import COMPRESSOR_THRESHOLD_DBFS, _short_term_dbfs, analyse
+from probe.spectrum import _short_term_dbfs, analyse
+
+# 2026-08-15 より前の固定閾値。テストでは閾値を明示して渡します。
+THRESHOLD_DBFS = -32.0
 
 SR = 44100
 SUNG_PROMPT = "[Chorus] Focus on the lyrics marked [Chorus]."
@@ -60,17 +66,44 @@ def test_short_term_level_tracks_the_signal():
 
 def test_over_ratio_is_zero_when_the_band_is_quiet(tmp_path):
     """圧縮の閾値に届かない素材で「圧縮がかかる」と出てはいけない。"""
-    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.005), _recipe())[0]
+    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.005), _recipe(), THRESHOLD_DBFS)[0]
 
-    assert levels.treble_peak < COMPRESSOR_THRESHOLD_DBFS
+    assert levels.treble_peak < THRESHOLD_DBFS
     assert levels.over_ratio == 0.0
 
 
 def test_over_ratio_is_high_when_the_band_is_loud(tmp_path):
+    levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.5), _recipe(), THRESHOLD_DBFS)[0]
+
+    assert levels.treble_peak > THRESHOLD_DBFS
+    assert levels.over_ratio == pytest.approx(1.0, abs=0.05)
+
+
+def test_over_ratio_is_left_out_without_a_recorded_threshold(tmp_path):
+    """閾値の記録が無い曲で、推測の線で数えた値を出してはいけない。"""
     levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.5), _recipe())[0]
 
-    assert levels.treble_peak > COMPRESSOR_THRESHOLD_DBFS
-    assert levels.over_ratio == pytest.approx(1.0, abs=0.05)
+    assert levels.over_ratio is None
+
+
+def test_recorded_threshold_is_moved_onto_the_master(tmp_path):
+    """閾値は音量合わせより前で効くので、master.wav の上ではゲインの分だけ動く。"""
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"assessment": {"mastering": {
+        "treble_dbfs": -36.9, "treble_threshold_dbfs": -34.4, "loudness_gain_db": 0.29,
+    }}}), encoding="utf-8")
+
+    mastering = load_assessment(path).mastering
+
+    assert mastering.master_threshold_dbfs == pytest.approx(-34.11)
+
+
+def test_records_without_mastering_settings_still_load(tmp_path):
+    """2026-10-29 より前の記録には mastering が無い。"""
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"assessment": {"quality": {"measurements": {}}}}), encoding="utf-8")
+
+    assert load_assessment(path).mastering is None
 
 
 def test_sections_beyond_the_audio_are_dropped(tmp_path):
@@ -86,3 +119,29 @@ def test_sections_beyond_the_audio_are_dropped(tmp_path):
     levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.2, seconds=2.0), recipe)
 
     assert [lv.section.name for lv in levels] == ["Chorus"]
+
+
+def _kick_train(seconds: float = 4.0, bpm: float = 120.0, bed: float = 0.0) -> np.ndarray:
+    """60Hz のキックを拍ごとに置いた信号。bed を足すと、その振幅の 80Hz が鳴り続けて低域を埋める。"""
+    t = np.arange(int(seconds * SR)) / SR
+    since_beat = t % (60.0 / bpm)
+    kick = 0.5 * np.exp(-since_beat / 0.04) * np.sin(2 * np.pi * 60.0 * t)
+    return (kick + bed * np.sin(2 * np.pi * 80.0 * t)).astype(np.float32)
+
+
+def test_low_punch_separates_a_standing_kick_from_a_filled_low_end(tmp_path):
+    """キックだけなら打点で差が開き、持続するベースが低域を埋めると差が詰まる。"""
+    sf.write(tmp_path / "kick.wav", _kick_train(), SR)
+    sf.write(tmp_path / "filled.wav", _kick_train(bed=0.3), SR)
+
+    kick = analyse(tmp_path / "kick.wav", _recipe())[0].low_punch
+    filled = analyse(tmp_path / "filled.wav", _recipe())[0].low_punch
+
+    assert kick > 10.0
+    assert filled < kick - 5.0
+
+
+def test_low_punch_is_flat_for_a_steady_tone(tmp_path):
+    levels = analyse(_write(tmp_path / "t.wav", 80.0, 0.5), _recipe())[0]
+
+    assert levels.low_punch == pytest.approx(0.0, abs=0.5)

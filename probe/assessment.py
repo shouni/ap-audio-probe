@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +30,7 @@ import soundfile as sf
 from scipy.signal import sosfilt
 
 from .loudness import measure as measure_loudness
+from .table import cell
 
 # 生成側 inspector.go の定数。名前も値もあちらに合わせています。
 ANALYSIS_WINDOW_SECONDS = 0.05
@@ -77,6 +77,27 @@ class Measurements:
 
 
 @dataclass(frozen=True)
+class MasteringSettings:
+    """生成側がその曲に掛けたマスタリング定数（MasteringSettings）。
+
+    2026-10-29 より前の記録には無く、そのときは Record.mastering が None です。
+    """
+
+    # 処理前の入力で測った 6-10kHz の平均。生成側が測れずに固定閾値へ退避した曲では None。
+    treble_dbfs: float | None
+    treble_threshold_dbfs: float
+    loudness_gain_db: float
+
+    @property
+    def master_threshold_dbfs(self) -> float:
+        """master.wav の上で見た閾値。
+
+        コンプレッサは音量合わせより前で効くので、処理後の音で線を引くにはゲインを足します。
+        """
+        return self.treble_threshold_dbfs + self.loudness_gain_db
+
+
+@dataclass(frozen=True)
 class Record:
     """assessment.json（生成側の AudioAssessmentRecord）から使う部分。"""
 
@@ -90,6 +111,7 @@ class Record:
     issues: list[tuple[str, str]]
     review: dict | None
     lyrics: dict | None
+    mastering: MasteringSettings | None = None
 
 
 def _bandpass_sos(sample_rate: int, low_hz: float, high_hz: float) -> np.ndarray:
@@ -221,6 +243,18 @@ def load(path: Path) -> Record:
         issues=[(i.get("kind", ""), i.get("detail", "")) for i in (quality.get("issues") or [])],
         review=assessment.get("review"),
         lyrics=assessment.get("lyrics"),
+        mastering=_mastering(assessment.get("mastering")),
+    )
+
+
+def _mastering(data: dict | None) -> MasteringSettings | None:
+    if not data or "treble_threshold_dbfs" not in data:
+        return None
+    treble = data.get("treble_dbfs")
+    return MasteringSettings(
+        treble_dbfs=None if treble is None else float(treble),
+        treble_threshold_dbfs=float(data["treble_threshold_dbfs"]),
+        loudness_gain_db=float(data.get("loudness_gain_db", 0.0)),
     )
 
 
@@ -283,19 +317,6 @@ def compare(record: Record, measured: Measurements, sample_rate: int = 44100) ->
     ]
 
 
-def _display_width(text: str) -> int:
-    """端末での表示幅。全角は 2 桁を占めます。
-
-    書式指定子の幅は文字数で数えるため、日本語の見出しを混ぜると列がずれます。
-    """
-    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
-
-
-def _cell(text: str, width: int, *, right: bool = False) -> str:
-    pad = " " * max(0, width - _display_width(text))
-    return pad + text if right else text + pad
-
-
 def render(record: Record, measured: Measurements, audio_name: str) -> str:
     lines = [
         f"\n{record.job_id or '(job_id なし)'}  記録 {record.created_at}",
@@ -303,8 +324,8 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
         f" / マスタリング {'適用' if record.mastered else '未適用'}",
         f"要約: {record.summary}",
         "",
-        _cell("項目", 18) + _cell("生成側(mp3)", 14, right=True)
-        + _cell(f"手元({audio_name})", 16, right=True) + _cell("差", 10, right=True),
+        cell("項目", 18) + cell("生成側(mp3)", 14, right=True)
+        + cell(f"手元({audio_name})", 16, right=True) + cell("差", 10, right=True),
         "-" * 76,
     ]
 
@@ -312,7 +333,7 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
     for c in compare(record, measured):
         mark = " ⚠" if c.unexplained else ""
         lines.append(
-            _cell(c.label, 18)
+            cell(c.label, 18)
             + f"{c.recorded:>14.3f}{c.measured:>16.3f}{c.diff:>+10.3f}{mark}"
             + (f"   {c.note}" if c.note else "")
         )
@@ -320,6 +341,13 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
             unexplained.append(c)
 
     lines.append("-" * 76)
+    if record.mastering:
+        mst = record.mastering
+        source = "固定値へ退避" if mst.treble_dbfs is None else f"入力の 6-10kHz {mst.treble_dbfs:.1f}dBFS から"
+        lines.append(
+            f"マスタリング定数: 6-10kHz 閾値 {mst.treble_threshold_dbfs:.1f}dBFS ({source})"
+            f" / 音量合わせ {mst.loudness_gain_db:+.2f}dB"
+        )
     if record.issues:
         lines.append("生成側が挙げた指摘:")
         lines.extend(f"  [{kind}] {detail}" for kind, detail in record.issues)

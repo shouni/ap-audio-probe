@@ -38,6 +38,7 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 .venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
 .venv/bin/python -m probe.spectrum audio/x.wav recipes/x.json        # セクション別の帯域
 .venv/bin/python -m probe.balance  audio/x.wav recipes/x.json        # 歌唱区間の「声 − 伴奏」
+.venv/bin/python -m probe.corpus   audio/*.wav [--balance]            # 曲を跨いでモード別に並べる
 .venv/bin/python -m probe.assessment audio/x.wav assessments/x.json  # 生成側の記録と突き合わせ
 ```
 
@@ -83,7 +84,7 @@ ASR は素直に使うと、歌われている行を「落ちた」と報告し�
 
 生成側のマスタリング処理が持つ定数（`acrossover=split=6000 10000`、`acompressor=threshold`）を検証するための計測です。セクション全体の RMS ではなく `_short_term_dbfs`（50ms 窓）を判断に使います。
 
-11曲の測定結果と、それが生成側の閾値相対化（2026-08-15）につながった経緯は README にあります。**`COMPRESSOR_THRESHOLD_DBFS` は固定値のままです**（何が読めなくなるかはその定数のコメント）。
+11曲の測定結果と、それが生成側の閾値相対化（2026-08-15）につながった経緯は README にあります。「圧縮域」の閾値は固定値ではなく、**`assessment.json` の `mastering`（生成側の `MasteringSettings`）から読みます。**記録が無い曲では列を出しません（理由は `BandLevels` の前のコメント）。
 
 **圧縮の下限は 2026-09-05 に 4000Hz から 6000Hz へ動いています。**4-6kHz は子音と存在感の帯域で、そこを含めるとサビの声が自分で閾値を踏むためです（生成側 `masterer.go` の `processingChain` に根拠）。`CROSSOVER_HZ` はチェーンと必ず同じ値にしてください。圧縮対象から外れた 4-6kHz は `PRESENCE_HZ` で切って別列に出しますが、判定には使いません。
 
@@ -93,6 +94,5 @@ ASR は素直に使うと、歌われている行を「落ちた」と報告し�
 
 ## 既知の問題
 
-- **`--device mps` が既定でフォールバックがない。** Apple Silicon 以外では `--device cpu` の明示が要ります。
 - **真正ピークが −1.0 dBTP をわずかに超える曲がある。** 08-04〜08-11 10:45 生成の5曲は超過していました（うち3曲は 0.0 dBTP 以上）。生成側がリミッターの天井を −1 から −2 dBFS に下げて（`masterer.go` の `limiterCeiling`。サンプルピーク基準のままです）直後の6曲は −1.6〜−1.8 dBTP でしたが、10-17〜18 生成の21曲では −0.9〜−1.7 dBTP で、2曲が超えています。天井の根拠（実測の最大超過 1.1dB）からして −0.9 dBTP なので、−2 dBFS では推奨に 0.1dB 届きません。この2曲は生成側の `assessment.json` でも見逃されていました。mp3 を測っていたことと、生成側の測定器が補間でサンプル間の中点を評価していなかったことの 2 つが原因で、2026-10-25 からは `master.wav` を直した測定器で測り、`loudness_from_master: true` が付きます（同じ21曲で ffmpeg との差は最大 0.08dB）。それより前の記録の真正ピークは信用せず、`probe.loudness` で測り直してください。
-- **高域圧縮の閾値は要検証。** 相対化のオフセット +2.5dB は、マスタリング後の音源（当時の 4-10kHz）で校正した値を、処理前の入力向けに補正して移したものです（測定方法の差 0.35dB、測定対象の差 1.4dB）。帯域が 09-05 に 6-10kHz へ動いたときも同じ値のままです。**処理前の入力は残らないので、master.wav だけでは確かめられません。**生成側のログ（`マスタリング定数を決めました` の `treble_dbfs` / `treble_threshold_dbfs`）を集めて詰める必要があります。
+- **高域圧縮の閾値は要検証。** 相対化のオフセット +2.5dB は、マスタリング後の音源（当時の 4-10kHz）で校正した値を、処理前の入力向けに補正して移したものです（測定方法の差 0.35dB、測定対象の差 1.4dB）。帯域が 09-05 に 6-10kHz へ動いたときも同じ値のままです。**処理前の入力は残らないので、master.wav だけでは確かめられません。**2026-10-29 に生成側が `assessment.json` の `mastering` へ `treble_dbfs` / `treble_threshold_dbfs` / `loudness_gain_db` を残す変更を入れたので、それ以降の曲が溜まれば `probe.corpus` の圧縮域（サビ / Verse）で詰められます。それより前の曲は生成側のログ（`マスタリング定数を決めました`）にしか残っていません。

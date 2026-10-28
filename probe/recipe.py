@@ -31,6 +31,9 @@ class Recipe:
     # lyrics はセクション名から、そこで歌われるはずの行を引くための対応表です。
     # インスト曲では空になります。
     lyrics: dict[str, list[str]] = field(default_factory=dict)
+    # compose_mode は生成側の作曲モード（edm_pop、sparkle_rock など）です。曲を跨いだ比較で
+    # 同じモードどうしを並べるために使います。古いレシピには無く、そのときは空です。
+    compose_mode: str = ""
 
     @property
     def declared_duration(self) -> float:
@@ -75,4 +78,5 @@ def load(path: Path) -> Recipe:
         tempo=int(data["tempo"]),
         sections=sections,
         lyrics=parse_lyrics(lyrics_block),
+        compose_mode=data.get("compose_mode", ""),
     )

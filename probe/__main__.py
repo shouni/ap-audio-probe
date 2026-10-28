@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 from . import recipe as recipe_mod
-from .separate import separate_vocals
+from .separate import resolve_device, separate_vocals
 from .vocals import ACTIVE_RATIO_THRESHOLD, VOCAL_MARGIN_DB, Report, analyse
 
 
@@ -64,11 +64,12 @@ def main() -> None:
     parser.add_argument("audio", type=Path, help="音源 (mp3/wav)")
     parser.add_argument("recipe", type=Path, help="recipe.json")
     parser.add_argument("--out", type=Path, default=Path("out"), help="stem の出力先")
-    parser.add_argument("--device", default="mps", help="demucs の実行デバイス")
+    parser.add_argument("--device", help="demucs の実行デバイス (省略時は mps / cuda / cpu から自動)")
     args = parser.parse_args()
 
-    print(f"[1/2] ボーカル stem を分離中 ({args.device}) ...")
-    vocals = separate_vocals(args.audio, args.out, device=args.device)
+    device = resolve_device(args.device)
+    print(f"[1/2] ボーカル stem を分離中 ({device}) ...")
+    vocals = separate_vocals(args.audio, args.out, device=device)
 
     print("[2/2] セクション別に測定中 ...\n")
     print(_render(analyse(vocals, recipe_mod.load(args.recipe))))

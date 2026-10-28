@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("audio", type=Path)
     parser.add_argument("recipe", type=Path)
     parser.add_argument("--out", type=Path, default=Path("out"))
-    parser.add_argument("--device", default="mps", help="demucs の実行デバイス")
+    parser.add_argument("--device", help="demucs の実行デバイス (省略時は mps / cuda / cpu から自動)")
     parser.add_argument("--model", default=lyrics_mod.MODEL, help="faster-whisper のモデル")
     args = parser.parse_args()
 
