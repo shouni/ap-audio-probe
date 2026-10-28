@@ -8,7 +8,8 @@
 分かりません。「効いている」ことは言えても「必要である」ことの証明にはなりません。
 
 この計測で 11曲を測った結果、閾値が固定値では曲ごとにばらつくと分かり、生成側は
-2026-08-15 に曲ごとの相対へ変えました。COMPRESSOR_THRESHOLD_DBFS を参照。
+2026-08-15 に曲ごとの相対へ変えました。その閾値は assessment.json から読みます
+（「圧縮域」の列の説明は BandLevels の前のコメントを参照）。
 
     python -m probe.spectrum audio/foo.wav recipes/foo.json
 """
@@ -24,6 +25,7 @@ import soundfile as sf
 from scipy.signal import butter, sosfiltfilt
 
 from . import recipe as recipe_mod
+from .assessment import load as load_assessment
 from .recipe import Recipe, Section
 from .vocals import SILENCE_DBFS, dbfs
 
@@ -44,14 +46,18 @@ CROSSOVER_HZ = (6000.0, 10000.0)
 # 戻ったか」を見る列が要るためです。判定（圧縮域）には使いません。
 PRESENCE_HZ = 4000.0
 
-# マスタリング処理の acompressor=threshold=0.025 を dBFS にした値です。サビがこれを超えると
-# 圧縮がかかり、Verse は素通りする、という設計になっています。
+# キックとベースが乗る帯域。低域のアタック感（LOW_PUNCH_PERCENTILES）を測るためだけの線で、
+# マスタリング処理には対応する分割がありません。
+LOW_PUNCH_HZ = (40.0, 120.0)
+
+# 低域の短時間レベルの上位値と中央値の差を「アタック感」として出します。キックが立っていれば
+# 打点だけが持ち上がって差が開き、ベースやパッドが低域を埋めていれば差が詰まります。
 #
-# ただしこれは 2026-08-15 より前の固定値です。生成側はその日に、曲自身の高域平均から
-# +2.5dB 上へ置く相対の閾値に変えました。probe 側は未対応なので、それ以降に生成された曲では
-# 「圧縮域」の列は実際にかかった量ではありません。基準の帯域そのものも 2026-09-05 に
-# 4-10kHz から 6-10kHz へ動いているので、その前後の曲を同じ列で比べることもできません。
-COMPRESSOR_THRESHOLD_DBFS = 20.0 * np.log10(0.025)
+# 2026-10-28 に、同じ指示から作った曲を Flow Music 版と比べたときに要った量です。曲全体
+# (-40dB 床) で測ると sparkle_rock の 3 曲が 3.8〜5.3dB、edm_pop 20 曲の中央値が 8.1dB、
+# Flow Music 版が 8.0dB でした。生成側のマスタリングを Flow Music 版に掛けても 7.7 → 7.6dB
+# で、この差はマスタリングではなく生成で決まっています。合否の線は置いていません。
+LOW_PUNCH_PERCENTILES = (95, 50)
 
 # 相対化より前、マスタリング処理が根拠にしていた実測値。11曲を測り直したところ
 # サビの短時間レベルは -29.3〜-31.4dBFS で、この前提より低いところに集まっていました。
@@ -78,6 +84,18 @@ DETECTOR_WINDOW_SECONDS = 0.05
 DETECTOR_HOP_SECONDS = 0.01
 
 
+# 「圧縮域」の列は、生成側が assessment.json に残した閾値（mastering.treble_threshold_dbfs）に
+# 音量合わせのゲインを足し、master.wav の上で引き直した線で数えます。
+#
+# 以前はマスタリング処理の固定値（acompressor=threshold=0.025、-32.0dBFS）で数えていました。
+# 生成側は 2026-08-15 に閾値を曲ごとの相対へ変えており、それ以降の曲ではこの列が実際に
+# かかった量を表していませんでした。曲ごとの閾値はログにしか残らなかったため、2026-10-29 に
+# 生成側の記録へ載せる変更を入れ、ここはそれを読むだけにしています。記録の無い曲では列を
+# 出しません。推測した閾値で数えると、読む人が実際の量と取り違えます。
+#
+# コンプレッサの出力が閾値を超えるのは入力が超えたときだけなので（静特性では単調）、
+# 処理後の音で数えた時間は、圧縮が掛かった時間の近似になります。帯域の切り方は
+# acrossover と違い、平均で 0.35dB ずれます（masterer.go の trebleThresholdOffsetDB）。
 @dataclass
 class BandLevels:
     section: Section
@@ -88,11 +106,19 @@ class BandLevels:
     treble: float
     air: float
     # treble_peak は 6-10kHz の短時間レベルの上位値、over_ratio はそれが閾値を超えた時間の割合です。
+    # 閾値が分からない曲では over_ratio は None です。
     treble_peak: float
-    over_ratio: float
+    over_ratio: float | None
+    # low_punch は 40-120Hz の短時間レベルの上位値と中央値の差（dB）です。LOW_PUNCH_PERCENTILES を参照。
+    low_punch: float
 
 
-def analyse(audio_path: Path, recipe: Recipe) -> list[BandLevels]:
+def analyse(audio_path: Path, recipe: Recipe, threshold_dbfs: float | None = None) -> list[BandLevels]:
+    """セクションごとの帯域レベルを測る。
+
+    threshold_dbfs は master.wav の上で見た圧縮の閾値です（MasteringSettings.master_threshold_dbfs）。
+    省くと over_ratio は None になります。
+    """
     data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
     mono = data.mean(axis=1)
     seconds = len(mono) / sr
@@ -103,6 +129,7 @@ def analyse(audio_path: Path, recipe: Recipe) -> list[BandLevels]:
         "presence": _band(mono, sr, PRESENCE_HZ, lo_cut),
         "treble": _band(mono, sr, lo_cut, hi_cut),
         "air": _band(mono, sr, hi_cut, None),
+        "kick": _band(mono, sr, *LOW_PUNCH_HZ),
     }
 
     levels = []
@@ -119,12 +146,22 @@ def analyse(audio_path: Path, recipe: Recipe) -> list[BandLevels]:
                 treble=dbfs(bands["treble"][start:end]),
                 air=dbfs(bands["air"][start:end]),
                 treble_peak=float(np.percentile(short_term, 95)) if short_term.size else SILENCE_DBFS,
-                over_ratio=float(np.mean(short_term > COMPRESSOR_THRESHOLD_DBFS))
-                if short_term.size
-                else 0.0,
+                over_ratio=None
+                if threshold_dbfs is None
+                else float(np.mean(short_term > threshold_dbfs)) if short_term.size else 0.0,
+                low_punch=low_punch(bands["kick"][start:end], sr),
             )
         )
     return levels
+
+
+def low_punch(kick_band: np.ndarray, sr: int) -> float:
+    """40-120Hz に切った信号から、短時間レベルの上位値と中央値の差を返す。"""
+    short_term = _short_term_dbfs(kick_band, sr)
+    if not short_term.size:
+        return 0.0
+    high, mid = np.percentile(short_term, LOW_PUNCH_PERCENTILES)
+    return float(high - mid)
 
 
 def _short_term_dbfs(x: np.ndarray, sr: int) -> np.ndarray:
@@ -140,24 +177,25 @@ def _short_term_dbfs(x: np.ndarray, sr: int) -> np.ndarray:
     return 20.0 * np.log10(np.maximum(rms, 1e-12))
 
 
-def render(title: str, levels: list[BandLevels]) -> str:
+def render(title: str, levels: list[BandLevels], threshold_dbfs: float | None = None) -> str:
     lines = [
         f"\n{title}",
         f"{'section':<11}{'<4k':>9}{'4-6k':>9}{'6-10k':>9}{'>10k':>9}"
-        f"{'6-10k 短時間':>11}{'圧縮域':>5}",
-        "-" * 68,
+        f"{'6-10k 短時間':>11}{'圧縮域':>5}{'低域起伏':>8}",
+        "-" * 78,
     ]
     for lv in levels:
         lines.append(
             f"{lv.section.name:<11}{lv.low:>7.1f}dB{lv.presence:>7.1f}dB"
             f"{lv.treble:>7.1f}dB{lv.air:>7.1f}dB"
-            f"{lv.treble_peak:>11.1f}dB{lv.over_ratio:>8.0%}"
+            f"{lv.treble_peak:>11.1f}dB"
+            f"{'-' if lv.over_ratio is None else f'{lv.over_ratio:.0%}':>8}{lv.low_punch:>8.1f}dB"
         )
 
     sung = [lv for lv in levels if not lv.section.instrumental]
     chorus = [lv for lv in sung if "Chorus" in lv.section.name]
     verse = [lv for lv in sung if "Verse" in lv.section.name]
-    lines.append("-" * 68)
+    lines.append("-" * 78)
     if chorus and verse:
         c = float(np.mean([lv.treble for lv in chorus]))
         v = float(np.mean([lv.treble for lv in verse]))
@@ -166,10 +204,16 @@ def render(title: str, levels: list[BandLevels]) -> str:
             f"サビ {c:.1f}dB / Verse {v:.1f}dB / 差 {c - v:.1f}dB"
             f"  (マスタリングの前提: {ASSUMED_CHORUS_DBFS:.0f} / {ASSUMED_VERSE_DBFS:.0f}、当時は 4-10k)"
         )
-        lines.append(
-            f"サビの短時間レベル {cp:.1f}dB / 閾値 {COMPRESSOR_THRESHOLD_DBFS:.1f}dB"
-            f"  → {'圧縮がかかる' if cp > COMPRESSOR_THRESHOLD_DBFS else '閾値に届かない'}"
-        )
+        if threshold_dbfs is None:
+            lines.append(
+                f"サビの短時間レベル {cp:.1f}dB / 閾値は不明"
+                "（assessment.json に mastering が無い曲。圧縮域の列も出しません）"
+            )
+        else:
+            lines.append(
+                f"サビの短時間レベル {cp:.1f}dB / 閾値 {threshold_dbfs:.1f}dB (master.wav 上)"
+                f"  → {'圧縮がかかる' if cp > threshold_dbfs else '閾値に届かない'}"
+            )
         # 4-6kHz は 2026-09-05 に圧縮対象から外れた帯域です。声の芯が残っているかを
         # 曲を跨いで追うための行で、判定には使いません。
         cpr = float(np.mean([lv.presence for lv in chorus]))
@@ -189,9 +233,20 @@ def render(title: str, levels: list[BandLevels]) -> str:
     return "\n".join(lines)
 
 
+def recorded_threshold(audio: Path, assessments: Path) -> float | None:
+    """assessments/<音源の名前>.json に記録された閾値を、master.wav の上の値で返す。"""
+    path = assessments / f"{audio.stem}.json"
+    if not path.exists():
+        return None
+    mastering = load_assessment(path).mastering
+    return None if mastering is None else mastering.master_threshold_dbfs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pairs", type=Path, nargs="+", help="audio recipe を交互に並べる")
+    parser.add_argument("--assessments", type=Path, default=Path("assessments"),
+                        help="assessment.json の置き場所（圧縮の閾値をここから読みます）")
     args = parser.parse_args()
 
     if len(args.pairs) % 2:
@@ -199,7 +254,8 @@ def main() -> None:
 
     for audio, recipe_path in zip(args.pairs[::2], args.pairs[1::2]):
         rec = recipe_mod.load(recipe_path)
-        print(render(f"{rec.title}  ({audio.stem})", analyse(audio, rec)))
+        threshold = recorded_threshold(audio, args.assessments)
+        print(render(f"{rec.title}  ({audio.stem})", analyse(audio, rec, threshold), threshold))
 
 
 if __name__ == "__main__":

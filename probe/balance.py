@@ -97,7 +97,7 @@ def main() -> None:
     parser.add_argument("audio", type=Path, help="音源 (mp3/wav)")
     parser.add_argument("recipe", type=Path, help="recipe.json")
     parser.add_argument("--out", type=Path, default=Path("out"), help="stem の出力先")
-    parser.add_argument("--device", default="mps", help="demucs の実行デバイス")
+    parser.add_argument("--device", help="demucs の実行デバイス (省略時は mps / cuda / cpu から自動)")
     args = parser.parse_args()
 
     vocals = separate_vocals(args.audio, args.out, device=args.device)

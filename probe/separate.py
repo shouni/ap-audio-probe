@@ -14,10 +14,29 @@ from pathlib import Path
 MODEL = "htdemucs"
 
 
-def separate_vocals(audio: Path, out_dir: Path, device: str = "mps") -> Path:
+def resolve_device(device: str | None) -> str:
+    """demucs の実行デバイスを決める。指定があればそれを、無ければ使えるものを選ぶ。
+
+    既定を "mps" に決め打ちしていた頃は、Apple Silicon 以外で --device cpu を書き忘れると
+    demucs が起動直後に落ちていました。torch の読み込みは数秒かかるので、指定があるときは
+    触りません。
+    """
+    if device:
+        return device
+    import torch
+
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+def separate_vocals(audio: Path, out_dir: Path, device: str | None = None) -> Path:
     """audio からボーカル stem を作り、その wav のパスを返す。
 
     既に分離済みなら再実行しない(MPS でも3分の曲に20秒程度かかるため)。
+    device を省くと resolve_device が選びます。
     """
     # demucs は拡張子を落とした名前で出力するため、同じ基底名の mp3 と wav が
     # 同じ場所に書き込んでしまいます。測る対象が入れ替わっても気づけないので、
@@ -32,7 +51,7 @@ def separate_vocals(audio: Path, out_dir: Path, device: str = "mps") -> Path:
         sys.executable, "-m", "demucs",
         "--two-stems", "vocals",
         "-n", MODEL,
-        "-d", device,
+        "-d", resolve_device(device),
         "-o", str(work),
         str(audio),
     ]

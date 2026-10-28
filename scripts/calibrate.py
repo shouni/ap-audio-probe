@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument("--section", default="Interlude", help="混入させるインスト区間")
     parser.add_argument("--source-start", type=float, default=40.0, help="歌声を取り出す秒数")
     parser.add_argument("--out", type=Path, default=Path("out"))
-    parser.add_argument("--device", default="mps")
+    parser.add_argument("--device", help="demucs の実行デバイス (省略時は mps / cuda / cpu から自動)")
     args = parser.parse_args()
 
     rec = recipe_mod.load(args.recipe)
