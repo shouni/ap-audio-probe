@@ -4,9 +4,11 @@
     python -m probe.corpus audio/*.wav --balance    # 声 − 伴奏も出す（未分離の曲は demucs が走る）
 
 レシピは recipes/<音源の名前>.json から引きます。見つからない曲は飛ばします。
-圧縮域は assessments/<音源の名前>.json に記録された閾値で数え、記録が無ければ空欄です。
+圧縮量は assessments/<音源の名前>.json に記録された閾値から逆算し、記録が無ければ空欄です。
 生成側の高域コンプの設計は「サビだけ踏み、Verse は素通り」なので、この 2 列をモードごとに
 並べたものが、閾値のオフセット（masterer.go の trebleThresholdOffsetDB）を詰める材料になります。
+超過時間（spectrum の「圧縮域」）ではなく量を並べるのは、時間だけでは瞬間的な山と
+持続する圧縮を区別できないためです（spectrum.gain_reduction の前のコメント）。
 
 1 曲ずつの計測（loudness / spectrum / balance）は、それだけでは「この値は普通か」に
 答えられません。2026-10-28 に sparkle_rock の低域のアタック感が低いと分かったのも、
@@ -43,9 +45,9 @@ class TrackSummary:
     # サビの 40-120Hz の起伏（spectrum.LOW_PUNCH_PERCENTILES）と 6-10kHz の平均レベル。
     chorus_low_punch: float | None
     chorus_treble: float | None
-    # 6-10kHz が圧縮の閾値を超えていた時間の割合（spectrum.BandLevels.over_ratio）。
-    chorus_over_ratio: float | None
-    verse_over_ratio: float | None
+    # 6-10kHz を縮めた量の平均 dB（spectrum.BandLevels.gain_reduction）。
+    chorus_gain_reduction: float | None
+    verse_gain_reduction: float | None
     # サビの「声 − 伴奏」。--balance を付けたときだけ入ります。
     chorus_vocal_over_backing: float | None
 
@@ -76,8 +78,8 @@ def summarise(
         true_peak_dbtp=loudness.true_peak_dbtp,
         chorus_low_punch=_section_mean([(lv.section.name, lv.low_punch) for lv in levels]),
         chorus_treble=_section_mean([(lv.section.name, lv.treble) for lv in levels]),
-        chorus_over_ratio=_section_mean([(lv.section.name, lv.over_ratio) for lv in levels]),
-        verse_over_ratio=_section_mean([(lv.section.name, lv.over_ratio) for lv in levels], "Verse"),
+        chorus_gain_reduction=_section_mean([(lv.section.name, lv.gain_reduction) for lv in levels]),
+        verse_gain_reduction=_section_mean([(lv.section.name, lv.gain_reduction) for lv in levels], "Verse"),
         chorus_vocal_over_backing=vocal_over_backing,
     )
 
@@ -87,12 +89,10 @@ NAME_WIDTH = 38
 VALUE_WIDTH = 9
 
 
-def _fmt(value: float | None, signed: bool = False, percent: bool = False) -> str:
+def _fmt(value: float | None, signed: bool = False, digits: int = 1) -> str:
     if value is None:
         return "-"
-    if percent:
-        return f"{value:.0%}"
-    return f"{value:+.1f}" if signed else f"{value:.1f}"
+    return f"{value:+.{digits}f}" if signed else f"{value:.{digits}f}"
 
 
 def _median(values: list[float | None]) -> float | None:
@@ -104,24 +104,24 @@ def _row(label: str, cells: list[str]) -> str:
     return cell(label, NAME_WIDTH) + "".join(cell(c, VALUE_WIDTH, right=True) for c in cells)
 
 
-def _values(lufs, tp, punch, treble, chorus_over, verse_over, vob) -> list[str]:
+def _values(lufs, tp, punch, treble, chorus_gr, verse_gr, vob) -> list[str]:
     return [
         _fmt(lufs), _fmt(tp), _fmt(punch), _fmt(treble),
-        _fmt(chorus_over, percent=True), _fmt(verse_over, percent=True), _fmt(vob, signed=True),
+        _fmt(chorus_gr, digits=2), _fmt(verse_gr, digits=2), _fmt(vob, signed=True),
     ]
 
 
 def _cells(t: TrackSummary) -> tuple:
     return (
         t.integrated_lufs, t.true_peak_dbtp, t.chorus_low_punch, t.chorus_treble,
-        t.chorus_over_ratio, t.verse_over_ratio, t.chorus_vocal_over_backing,
+        t.chorus_gain_reduction, t.verse_gain_reduction, t.chorus_vocal_over_backing,
     )
 
 
 def render(tracks: list[TrackSummary]) -> str:
     rule = "-" * (NAME_WIDTH + VALUE_WIDTH * 7)
     lines = [
-        _row("track", ["LUFS", "TP", "低域起伏", "6-10k", "圧縮域", "圧縮域", "声−伴奏"]),
+        _row("track", ["LUFS", "TP", "低域起伏", "6-10k", "圧縮量", "圧縮量", "声−伴奏"]),
         _row("", ["", "dBTP", "(サビ)", "(サビ)", "(サビ)", "(Verse)", "(サビ)"]),
         rule,
     ]
@@ -136,7 +136,7 @@ def render(tracks: list[TrackSummary]) -> str:
 
     lines += [
         "低域起伏: 40-120Hz の短時間レベルの上位値 − 中央値。小さいほどキックが平たい。",
-        "圧縮域: 6-10kHz が記録された閾値を超えていた時間。記録の無い曲は空欄。",
+        "圧縮量: 6-10kHz を縮めた量の平均 dB（記録された閾値から逆算）。記録の無い曲は空欄。",
         "声−伴奏: 声が鳴っているフレームでの中央値。マイナスは伴奏のほうが大きい。",
     ]
     return "\n".join(lines)

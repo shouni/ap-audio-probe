@@ -96,6 +96,16 @@ DETECTOR_HOP_SECONDS = 0.01
 # コンプレッサの出力が閾値を超えるのは入力が超えたときだけなので（静特性では単調）、
 # 処理後の音で数えた時間は、圧縮が掛かった時間の近似になります。帯域の切り方は
 # acrossover と違い、平均で 0.35dB ずれます（masterer.go の trebleThresholdOffsetDB）。
+#
+# 「圧縮量」の列は、閾値を超えたフレームが処理前にどれだけ大きかったかを静特性から逆算し、
+# 縮めた分の dB をセクションで平均したものです。超えていないフレームは 0 として数えます。
+# 時間の割合だけでは量が分かりません。2026-10-28 の 24 曲では、Verse の超過時間は中央値 7% と
+# 設計時の 5% を上回って見えましたが、平均の圧縮量は 0.35dB しかなく（サビは 1.84dB）、
+# 閾値を超えていたのはシンバルや子音のように瞬間的に突き出た山でした。knee と
+# アタック/リリースは無視しているので、0.5dB 単位で詰められる精度はありません。
+
+# マスタリング処理の acompressor=ratio=4。圧縮量の逆算にだけ使います。
+COMPRESSOR_RATIO = 4.0
 @dataclass
 class BandLevels:
     section: Section
@@ -109,6 +119,8 @@ class BandLevels:
     # 閾値が分からない曲では over_ratio は None です。
     treble_peak: float
     over_ratio: float | None
+    # gain_reduction は 6-10kHz を縮めた量のセクション平均（dB）です。閾値が分からない曲では None です。
+    gain_reduction: float | None
     # low_punch は 40-120Hz の短時間レベルの上位値と中央値の差（dB）です。LOW_PUNCH_PERCENTILES を参照。
     low_punch: float
 
@@ -117,7 +129,7 @@ def analyse(audio_path: Path, recipe: Recipe, threshold_dbfs: float | None = Non
     """セクションごとの帯域レベルを測る。
 
     threshold_dbfs は master.wav の上で見た圧縮の閾値です（MasteringSettings.master_threshold_dbfs）。
-    省くと over_ratio は None になります。
+    省くと over_ratio と gain_reduction は None になります。
     """
     data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
     mono = data.mean(axis=1)
@@ -149,10 +161,23 @@ def analyse(audio_path: Path, recipe: Recipe, threshold_dbfs: float | None = Non
                 over_ratio=None
                 if threshold_dbfs is None
                 else float(np.mean(short_term > threshold_dbfs)) if short_term.size else 0.0,
+                gain_reduction=None if threshold_dbfs is None else gain_reduction(short_term, threshold_dbfs),
                 low_punch=low_punch(bands["kick"][start:end], sr),
             )
         )
     return levels
+
+
+def gain_reduction(short_term: np.ndarray, threshold_dbfs: float) -> float:
+    """処理後の短時間レベルから、コンプレッサが縮めた量の平均（dB）を逆算する。
+
+    比 R の静特性では、閾値を d だけ超えた入力は d / R だけ超えて出てきます。処理後に
+    閾値を e 超えているフレームは、処理前に e * R 超えていたので、縮めた量は e * (R - 1) です。
+    """
+    if not short_term.size:
+        return 0.0
+    excess = np.maximum(short_term - threshold_dbfs, 0.0)
+    return float(np.mean(excess * (COMPRESSOR_RATIO - 1.0)))
 
 
 def low_punch(kick_band: np.ndarray, sr: int) -> float:
@@ -181,21 +206,23 @@ def render(title: str, levels: list[BandLevels], threshold_dbfs: float | None = 
     lines = [
         f"\n{title}",
         f"{'section':<11}{'<4k':>9}{'4-6k':>9}{'6-10k':>9}{'>10k':>9}"
-        f"{'6-10k 短時間':>11}{'圧縮域':>5}{'低域起伏':>8}",
-        "-" * 78,
+        f"{'6-10k 短時間':>11}{'圧縮域':>5}{'圧縮量':>6}{'低域起伏':>8}",
+        "-" * 86,
     ]
     for lv in levels:
         lines.append(
             f"{lv.section.name:<11}{lv.low:>7.1f}dB{lv.presence:>7.1f}dB"
             f"{lv.treble:>7.1f}dB{lv.air:>7.1f}dB"
             f"{lv.treble_peak:>11.1f}dB"
-            f"{'-' if lv.over_ratio is None else f'{lv.over_ratio:.0%}':>8}{lv.low_punch:>8.1f}dB"
+            f"{'-' if lv.over_ratio is None else f'{lv.over_ratio:.0%}':>8}"
+            f"{'-' if lv.gain_reduction is None else f'{lv.gain_reduction:.2f}dB':>9}"
+            f"{lv.low_punch:>8.1f}dB"
         )
 
     sung = [lv for lv in levels if not lv.section.instrumental]
     chorus = [lv for lv in sung if "Chorus" in lv.section.name]
     verse = [lv for lv in sung if "Verse" in lv.section.name]
-    lines.append("-" * 78)
+    lines.append("-" * 86)
     if chorus and verse:
         c = float(np.mean([lv.treble for lv in chorus]))
         v = float(np.mean([lv.treble for lv in verse]))
