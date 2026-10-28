@@ -10,7 +10,7 @@ import soundfile as sf
 
 from probe.assessment import load as load_assessment
 from probe.recipe import Recipe, Section
-from probe.spectrum import _short_term_dbfs, analyse
+from probe.spectrum import _short_term_dbfs, analyse, gain_reduction
 
 # 2026-08-15 より前の固定閾値。テストでは閾値を明示して渡します。
 THRESHOLD_DBFS = -32.0
@@ -145,3 +145,19 @@ def test_low_punch_is_flat_for_a_steady_tone(tmp_path):
     levels = analyse(_write(tmp_path / "t.wav", 80.0, 0.5), _recipe())[0]
 
     assert levels.low_punch == pytest.approx(0.0, abs=0.5)
+
+
+def test_gain_reduction_undoes_the_ratio():
+    """閾値を 2dB 超えて出てきたフレームは、処理前に 8dB 超えていた。縮めた量は 6dB。"""
+    short_term = np.array([-40.0, -30.0, -28.0, -30.0])
+
+    assert gain_reduction(short_term, -30.0) == pytest.approx(6.0 / 4)
+
+
+def test_gain_reduction_separates_a_spike_from_a_sustained_overshoot():
+    """超過時間が同じでも、瞬間的な山と持続する超過では縮めた量が違う。2026-10-28 の Verse がこの形。"""
+    spike = np.array([-40.0] * 9 + [-29.0])
+    sustained = np.array([-40.0] * 9 + [-25.0])
+
+    assert np.mean(spike > -30.0) == np.mean(sustained > -30.0)
+    assert gain_reduction(spike, -30.0) < gain_reduction(sustained, -30.0) / 4

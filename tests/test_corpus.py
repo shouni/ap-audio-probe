@@ -15,7 +15,7 @@ SR = 44100
 def _track(name: str, mode: str, punch: float | None, vob: float | None = None) -> TrackSummary:
     return TrackSummary(
         name=name, mode=mode, integrated_lufs=-12.4, true_peak_dbtp=-2.1,
-        chorus_low_punch=punch, chorus_treble=-34.0, chorus_over_ratio=None, verse_over_ratio=None,
+        chorus_low_punch=punch, chorus_treble=-34.0, chorus_gain_reduction=None, verse_gain_reduction=None,
         chorus_vocal_over_backing=vob,
     )
 
@@ -67,5 +67,5 @@ def test_summarise_averages_only_the_chorus_sections(tmp_path):
     assert summary.mode == "sparkle_rock"
     assert summary.chorus_low_punch > 10.0
     assert summary.chorus_vocal_over_backing is None
-    # assessment.json が無いので、圧縮域は数えない。
-    assert summary.chorus_over_ratio is None
+    # assessment.json が無いので、圧縮量は数えない。
+    assert summary.chorus_gain_reduction is None
