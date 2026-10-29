@@ -85,26 +85,40 @@ class SectionCheck:
         return [l for l in self.lines if not l.sung]
 
 
-def trim_to_voice(clip: np.ndarray, floor_dbfs: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
-    """切り出した区間の、声が鳴っている範囲だけに詰める。
+def trim_to_voice(
+    audio: np.ndarray,
+    floor_dbfs: float,
+    sample_rate: int = SAMPLE_RATE,
+    start: int = 0,
+    end: int | None = None,
+) -> np.ndarray:
+    """audio[start:end] の、声が鳴っている範囲だけに詰める。
 
     狙いは、声が一度も floor を超えない区間で空を返すことです。そこは本当に歌われて
     いないのに、渡せば whisper が幻聴を返します(実測では分離漏れだけの Outro が
     「ありがとうございました。」になりました)。行が丸ごと落ちたセクションはまさに
     この形なので、幻聴で埋まると検査そのものが意味を失います。
 
+    声があるかどうかは区間の中だけで判定し、前後の余白だけを区間の外へはみ出して
+    取ります。余白が区間の端で止まると、声が区間の頭ちょうどから鳴るセクションで
+    余白が 0 になり、whisper が区間を丸ごと幻聴で潰します(実測: 120 BPM の Verse
+    16-40s が「ご視聴ありがとうございました。」1文になり、6行すべてが落ちたと
+    報告されました。外へ 0.1 秒広げると全行が出ます)。判定まで外へ広げないのは、
+    丸ごと落ちたセクションが隣の歌尾を拾って「声あり」になるのを防ぐためです。
+
     声のある区間で端を詰めること自体は、幻聴を止めません(transcribe を参照)。
     """
-    levels = frame_levels(clip, sample_rate)
+    end = len(audio) if end is None else end
+    levels = frame_levels(audio[start:end], sample_rate)
     voiced = np.flatnonzero(levels > floor_dbfs)
     if voiced.size == 0:
-        return clip[:0]
+        return audio[:0]
 
     frame = int(FRAME_SECONDS * sample_rate)
     pad = int(CLIP_PAD_SECONDS * sample_rate)
-    lo = max(0, int(voiced[0]) * frame - pad)
-    hi = min(len(clip), (int(voiced[-1]) + 1) * frame + pad)
-    return clip[lo:hi]
+    lo = max(0, start + int(voiced[0]) * frame - pad)
+    hi = min(len(audio), start + (int(voiced[-1]) + 1) * frame + pad)
+    return audio[lo:hi]
 
 
 def transcribe(
@@ -148,8 +162,9 @@ def transcribe(
         if not recipe.lyrics.get(section.name):
             continue
 
-        clip = audio[int(section.start * SAMPLE_RATE):int(section.end * SAMPLE_RATE)]
-        clip = trim_to_voice(clip, floor)
+        clip = trim_to_voice(
+            audio, floor, start=int(section.start * SAMPLE_RATE), end=int(section.end * SAMPLE_RATE)
+        )
         if clip.size == 0:  # 音源がレシピの宣言尺より短い、または声が無い
             results.append((section, ""))
             continue
