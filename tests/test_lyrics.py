@@ -135,6 +135,26 @@ def test_padding_keeps_the_onset():
     assert np.max(np.abs(trimmed[: int(CLIP_PAD_SECONDS * SR)])) < LOUD
 
 
+def test_padding_reaches_outside_the_section():
+    """声が区間の頭から鳴っていても、余白は区間の外から取る。
+
+    余白が 0 になると whisper が区間を丸ごと幻聴で潰す(実測: 120 BPM の Verse)。
+    """
+    audio = _clip(2.0, 12.0, seconds=12.0)
+    start = 2 * SR
+    trimmed = trim_to_voice(audio, FLOOR, SR, start=start, end=len(audio))
+
+    assert len(trimmed) / SR == pytest.approx(10.0 + CLIP_PAD_SECONDS, abs=0.06)
+    assert np.max(np.abs(trimmed[: int(CLIP_PAD_SECONDS * SR) - 1])) < LOUD
+
+
+def test_a_neighbours_voice_does_not_make_a_silent_section_voiced():
+    """声の判定は区間の中だけで行う。隣の歌尾で「声あり」になれば、丸ごと落ちた行を見逃す。"""
+    audio = _clip(0.0, 2.0, seconds=12.0)  # 0-2s が隣の歌唱、2s 以降が調べたい区間
+
+    assert trim_to_voice(audio, FLOOR, SR, start=2 * SR, end=len(audio)).size == 0
+
+
 def test_a_fully_voiced_clip_is_left_alone():
     clip = _clip(0.0, 12.0, seconds=12.0)
 
