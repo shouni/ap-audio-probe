@@ -1,4 +1,4 @@
-"""帯域計測の回帰テスト。合成した信号で、帯域分離と短時間検出を確かめます。"""
+"""Regression tests for band measurement: band splitting and short-time detection on synthesised signals."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from probe.assessment import load as load_assessment
 from probe.recipe import Recipe, Section
 from probe.spectrum import _short_term_dbfs, analyse, gain_reduction
 
-# 2026-08-15 より前の固定閾値。テストでは閾値を明示して渡します。
+# the fixed threshold used before 2026-08-15; tests pass the threshold explicitly
 THRESHOLD_DBFS = -32.0
 
 SR = 44100
@@ -38,10 +38,10 @@ def _recipe(seconds: float = 4.0) -> Recipe:
     [(500.0, "low"), (5000.0, "presence"), (8000.0, "treble"), (15000.0, "air")],
 )
 def test_energy_lands_in_the_expected_band(tmp_path, freq, loudest):
-    """acrossover と同じ 6k/10k で切れていることを、単一の正弦波で確かめる。
+    """Check with single sines that the split is at 6k/10k, as in acrossover.
 
-    4-6kHz は 2026-09-05 に圧縮対象から外れた帯域です。表示だけの分割なので
-    acrossover には現れませんが、圧縮域の列へ混ざっていないことはここで押さえます。
+    4-6kHz left the compressed band on 2026-09-05. The split exists only for display and does not appear in
+    acrossover, but this pins that it does not leak into the "over" column.
     """
     levels = analyse(_write(tmp_path / "t.wav", freq, 0.5), _recipe())[0]
 
@@ -60,12 +60,12 @@ def test_short_term_level_tracks_the_signal():
 
     levels = _short_term_dbfs(quiet.astype(np.float32), SR)
 
-    # 振幅 0.01 の正弦波の RMS は -43dBFS 前後。
+    # a sine of amplitude 0.01 has an RMS around -43dBFS
     assert levels.mean() == pytest.approx(-43.0, abs=1.0)
 
 
 def test_over_ratio_is_zero_when_the_band_is_quiet(tmp_path):
-    """圧縮の閾値に届かない素材で「圧縮がかかる」と出てはいけない。"""
+    """Material below the compression threshold must not be reported as compressed."""
     levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.005), _recipe(), THRESHOLD_DBFS)[0]
 
     assert levels.treble_peak < THRESHOLD_DBFS
@@ -80,14 +80,14 @@ def test_over_ratio_is_high_when_the_band_is_loud(tmp_path):
 
 
 def test_over_ratio_is_left_out_without_a_recorded_threshold(tmp_path):
-    """閾値の記録が無い曲で、推測の線で数えた値を出してはいけない。"""
+    """Without a recorded threshold, no value counted against a guessed line may be shown."""
     levels = analyse(_write(tmp_path / "t.wav", 8000.0, 0.5), _recipe())[0]
 
     assert levels.over_ratio is None
 
 
 def test_recorded_threshold_is_moved_onto_the_master(tmp_path):
-    """閾値は音量合わせより前で効くので、master.wav の上ではゲインの分だけ動く。"""
+    """The threshold acts before loudness matching, so on master.wav it moves by the gain."""
     path = tmp_path / "a.json"
     path.write_text(json.dumps({"assessment": {"mastering": {
         "treble_dbfs": -36.9, "treble_threshold_dbfs": -34.4, "loudness_gain_db": 0.29,
@@ -99,7 +99,7 @@ def test_recorded_threshold_is_moved_onto_the_master(tmp_path):
 
 
 def test_records_without_mastering_settings_still_load(tmp_path):
-    """2026-10-29 より前の記録には mastering が無い。"""
+    """Records before 2026-10-29 have no mastering."""
     path = tmp_path / "a.json"
     path.write_text(json.dumps({"assessment": {"quality": {"measurements": {}}}}), encoding="utf-8")
 
@@ -122,7 +122,7 @@ def test_sections_beyond_the_audio_are_dropped(tmp_path):
 
 
 def _kick_train(seconds: float = 4.0, bpm: float = 120.0, bed: float = 0.0) -> np.ndarray:
-    """60Hz のキックを拍ごとに置いた信号。bed を足すと、その振幅の 80Hz が鳴り続けて低域を埋める。"""
+    """A 60Hz kick on every beat. With `bed`, an 80Hz tone of that amplitude keeps playing and fills the low end."""
     t = np.arange(int(seconds * SR)) / SR
     since_beat = t % (60.0 / bpm)
     kick = 0.5 * np.exp(-since_beat / 0.04) * np.sin(2 * np.pi * 60.0 * t)
@@ -130,7 +130,7 @@ def _kick_train(seconds: float = 4.0, bpm: float = 120.0, bed: float = 0.0) -> n
 
 
 def test_low_punch_separates_a_standing_kick_from_a_filled_low_end(tmp_path):
-    """キックだけなら打点で差が開き、持続するベースが低域を埋めると差が詰まる。"""
+    """Kicks alone widen the gap at the hits; a sustained bass filling the low end narrows it."""
     sf.write(tmp_path / "kick.wav", _kick_train(), SR)
     sf.write(tmp_path / "filled.wav", _kick_train(bed=0.3), SR)
 
@@ -148,14 +148,14 @@ def test_low_punch_is_flat_for_a_steady_tone(tmp_path):
 
 
 def test_gain_reduction_undoes_the_ratio():
-    """閾値を 2dB 超えて出てきたフレームは、処理前に 8dB 超えていた。縮めた量は 6dB。"""
+    """A frame 2dB over after processing was 8dB over before; the reduction is 6dB."""
     short_term = np.array([-40.0, -30.0, -28.0, -30.0])
 
     assert gain_reduction(short_term, -30.0) == pytest.approx(6.0 / 4)
 
 
 def test_gain_reduction_separates_a_spike_from_a_sustained_overshoot():
-    """超過時間が同じでも、瞬間的な山と持続する超過では縮めた量が違う。2026-10-28 の Verse がこの形。"""
+    """Same time over the threshold, but brief peaks and sustained excess differ in reduction. The 2026-10-28 verses looked like this."""
     spike = np.array([-40.0] * 9 + [-29.0])
     sustained = np.array([-40.0] * 9 + [-25.0])
 

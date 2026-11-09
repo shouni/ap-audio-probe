@@ -1,4 +1,4 @@
-"""レシピ JSON からセクション構成を読む。"""
+"""Read the section layout from a recipe JSON."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# インスト指定セクションは、プロンプト冒頭に必ずこの語が入る(生成側のプロンプト規約)。
+# A section marked instrumental always starts its prompt with this phrase (the generator's prompt convention).
 INSTRUMENTAL_MARKER = "Instruments only"
 
 
@@ -19,7 +19,7 @@ class Section:
 
     @property
     def instrumental(self) -> bool:
-        """レシピ自身が「楽器のみ」と指示しているセクションか。"""
+        """Whether the recipe itself says this section is instruments only."""
         return INSTRUMENTAL_MARKER in self.prompt
 
 
@@ -28,11 +28,10 @@ class Recipe:
     title: str
     tempo: int
     sections: list[Section]
-    # lyrics はセクション名から、そこで歌われるはずの行を引くための対応表です。
-    # インスト曲では空になります。
+    # lyrics maps a section name to the lines that should be sung there. Empty for instrumentals.
     lyrics: dict[str, list[str]] = field(default_factory=dict)
-    # compose_mode は生成側の作曲モード（edm_pop、sparkle_rock など）です。曲を跨いだ比較で
-    # 同じモードどうしを並べるために使います。古いレシピには無く、そのときは空です。
+    # compose_mode is the generator's composing mode (edm_pop, sparkle_rock, ...). Cross-song comparisons
+    # use it to line up songs of the same mode. Older recipes lack it, and then it is empty.
     compose_mode: str = ""
 
     @property
@@ -41,9 +40,9 @@ class Recipe:
 
 
 def parse_lyrics(text: str) -> dict[str, list[str]]:
-    """`[Verse]` のようなタグ行で区切られた歌詞を、セクション名ごとの行に割る。
+    """Split lyrics separated by tag lines such as `[Verse]` into lines per section name.
 
-    タグは sections[].name と完全一致する前提です(生成側の取り決め)。
+    Tags are assumed to match sections[].name exactly (the generator's convention).
     """
     sections: dict[str, list[str]] = {}
     current: str | None = None

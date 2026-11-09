@@ -1,15 +1,15 @@
-"""歌唱セクションごとに、声が伴奏よりどれだけ前に出ているかを測る。
+"""Measure, per sung section, how far the voice sits in front of the backing.
 
     python -m probe.balance audio/foo.wav recipes/foo.json
 
-講評モデルの「サビでシンセが声を覆う」という指摘を、数字で確かめるための計測です。
-demucs で分けた 2 本の stem（vocals.wav と no_vocals.wav）を同じ時刻で比べ、
-声が鳴っているフレームだけで「声 − 伴奏」の dB 差の中央値を出します。
+A measurement to check, with numbers, the review model's remark that "synths cover the voice in the chorus".
+It compares the two demucs stems (vocals.wav and no_vocals.wav) at the same times and reports the median
+"voice − backing" difference in dB over the frames where the voice sounds.
 
-2026-10-17 の 4 曲では、サビが -4〜-7dB（伴奏のほうが大きい）、Verse が -1dB 前後で、
-講評が「埋もれる」と言った区間と一致しました。生成側の edm_pop のサビ指示を直した後の
-曲が -3.2 / -3.6dB です。値は曲ごとの比較と、プロンプトを変えた前後の比較に使います。
-何 dB なら合格という閾値は置いていません（判定は聴く人に残す、というこのツールの方針）。
+On four songs from 2026-10-17, choruses were -4 to -7dB (backing louder) and verses around -1dB, matching
+the passages the review called buried. Songs after the generator's edm_pop chorus instructions were revised
+measured -3.2 / -3.6dB. Use the value to compare songs, and before / after a prompt change. There is no
+pass threshold (judgement is left to the listener, as everywhere in this tool).
 """
 
 from __future__ import annotations
@@ -26,19 +26,19 @@ from .recipe import Recipe, Section
 from .separate import separate_vocals
 from .vocals import FRAME_SECONDS, frame_levels, sung_reference
 
-# 声のフレームと見なす床。歌唱区間の RMS 中央値（sung_reference）からこの幅までを
-# 「歌っている」とし、息継ぎや無音の行間を差の計算に入れません。行間で伴奏だけが
-# 鳴っているフレームを含めると、声の大きさと無関係に差がマイナスへ引っ張られます。
+# Floor for voiced frames. Frames within this margin of the sung sections' median RMS (sung_reference) count
+# as singing, which keeps breaths and silent gaps between lines out of the difference. Including frames where
+# only the backing plays between lines would pull the difference negative regardless of the voice's level.
 VOICED_MARGIN_DB = 12.0
 
-# 有声フレームがこれより少ない区間は、差を出しません（中央値が数フレームで決まるため）。
+# Sections with fewer voiced frames than this get no value (the median would rest on a few frames).
 MIN_VOICED_FRAMES = 20
 
 
 @dataclass
 class SectionBalance:
     section: Section
-    # 声が鳴っているフレームでの「声 − 伴奏」の中央値（dB）。出せなければ None。
+    # median "voice − backing" (dB) over voiced frames; None when it cannot be computed
     vocal_over_backing_db: float | None
     voiced_frames: int
 
@@ -52,7 +52,7 @@ def analyse_balance(vocals_wav: Path, backing_wav: Path, recipe: Recipe) -> list
     vocals, sr = _mono(vocals_wav)
     backing, backing_sr = _mono(backing_wav)
     if backing_sr != sr:
-        raise ValueError(f"stem のサンプルレートが揃っていない: {sr} / {backing_sr}")
+        raise ValueError(f"stem sample rates differ: {sr} / {backing_sr}")
     length = min(len(vocals), len(backing))
     vocals, backing = vocals[:length], backing[:length]
     seconds = length / sr
@@ -78,7 +78,7 @@ def _render(title: str, balances: list[SectionBalance]) -> str:
     lines = [
         title,
         "",
-        f"{'section':<10} {'区間':<14} {'声 − 伴奏':>10} {'有声':>8}",
+        f"{'section':<10} {'span':<14} {'voice-back':>10} {'voiced':>8}",
         "-" * 48,
     ]
     for b in balances:
@@ -87,17 +87,17 @@ def _render(title: str, balances: list[SectionBalance]) -> str:
         lines.append(f"{b.section.name:<10} {span:<14} {value:>10} {b.voiced_frames * FRAME_SECONDS:>7.1f}s")
     lines += [
         "-" * 48,
-        "声が鳴っているフレームだけで測った中央値です。マイナスは伴奏のほうが大きいことを示します。",
+        "Median over voiced frames only. Negative means the backing is louder.",
     ]
     return "\n".join(lines)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="probe.balance", description=__doc__)
-    parser.add_argument("audio", type=Path, help="音源 (mp3/wav)")
+    parser.add_argument("audio", type=Path, help="audio (mp3/wav)")
     parser.add_argument("recipe", type=Path, help="recipe.json")
-    parser.add_argument("--out", type=Path, default=Path("out"), help="stem の出力先")
-    parser.add_argument("--device", help="demucs の実行デバイス (省略時は mps / cuda / cpu から自動)")
+    parser.add_argument("--out", type=Path, default=Path("out"), help="where to write the stems")
+    parser.add_argument("--device", help="device for demucs (default: picks mps / cuda / cpu)")
     args = parser.parse_args()
 
     vocals = separate_vocals(args.audio, args.out, device=args.device)

@@ -2,28 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 概要
+## Overview
 
-AP Audio Probe は、生成された楽曲が**レシピの指示どおりに鳴っているか**を測る検証ベンチです。入力は生成側が同じ GCS ディレクトリに吐く音源とレシピの2つで、`recipe.json` の `sections[].start_seconds` / `end_seconds` が区間の唯一の基準になります。
+AP Audio Probe is a test bench that measures whether a generated song **plays as its recipe instructs**. Its inputs are the audio and the recipe that the generator writes to the same GCS directory; `sections[].start_seconds` / `end_seconds` in `recipe.json` is the only source of section boundaries.
 
-生成の良し悪し（メロディ、歌のうまさ、曲としての出来）は対象外です。ここで測れるのは「指示に反していないか」だけで、音楽的な判断は人間の実聴に残ります。
+Musical quality (melody, singing, how good the song is) is out of scope. It can only tell whether the instructions were broken; musical judgement stays with a human listener.
 
-## ドキュメントの置き場所
+## Conventions
 
-同じ話を三度書かないための取り決めです。2026-08-15 の閾値変更が3か所に散り、うち2か所が1週間ぶん古いまま残ったのがきっかけでした。
+- **Write code comments, docstrings, CLI help, table headings and messages in English.** This is a public repository; the whole codebase moved to English on 2026-11-09, so do not mix Japanese back in. Japanese stays only as data: lyrics and transcripts in tests (the lyric check works on Japanese singing), and quoted hallucination strings such as 「ご視聴ありがとうございました」.
+- **`README.md` is English and `README.ja.md` is its Japanese version.** When one changes, update the other in the same commit.
 
-- **なぜそう決めたか（実測値、効かなかった手）は、その定数や関数のコメント。** 判断を変えるときに必ず目に入る場所に置きます。
-- **何が測れて何が測れないかは README。** 読者は実行する人で、コードは読みません。
-- **このファイルは、コードを読む前に要る前提と、生成側の未確定事項だけ。** 詳細は繰り返さず、どのファイルにあるかを指します。
+## Where things are written
 
-## コマンド
+An agreement so the same thing is not written three times. It started when the 2026-08-15 threshold change was scattered over three places and two of them stayed a week out of date.
 
-venv は Python 3.14（PyCharm が作ったプロジェクト内 `.venv`）。numba も ctranslate2 も 3.14 の wheel があるので、Python を下げる必要はありません。
+- **Why something was decided (measurements, what did not work) goes in the comment on that constant or function**, where anyone changing the decision will see it.
+- **What can and cannot be measured goes in the README.** Its readers run the tool and do not read the code.
+- **This file holds only what is needed before reading the code, and the generator's open questions.** It points to where details live instead of repeating them.
+
+## Commands
+
+The venv is Python 3.14 (the in-project `.venv` created by PyCharm). numba and ctranslate2 both ship 3.14 wheels, so there is no need for an older Python.
 
 ```bash
 .venv/bin/pip install -r requirements.txt
 
-# 検証対象を GCS から取る（job_id は生成ジョブの完了通知から、<bucket> は置き場所に読み替え）
+# fetch what to check from GCS (job_id from the job's completion notice; replace <bucket>)
 gsutil cp gs://<bucket>/music/<job_id>/master.wav  audio/<name>.wav
 gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 
@@ -31,66 +36,66 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 ```
 
 ```bash
-.venv/bin/pytest                                                     # 回帰テスト(数秒)
+.venv/bin/pytest                                                     # regression tests (seconds)
 .venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
-.venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # 実地の陽性対照(数分)
-.venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # 行落ち検査(数分)
-.venv/bin/python -m probe.loudness audio/*.wav                       # 曲間のラウドネス
-.venv/bin/python -m probe.spectrum audio/x.wav recipes/x.json        # セクション別の帯域
-.venv/bin/python -m probe.balance  audio/x.wav recipes/x.json        # 歌唱区間の「声 − 伴奏」
-.venv/bin/python -m probe.corpus   audio/*.wav [--balance]            # 曲を跨いでモード別に並べる
-.venv/bin/python -m probe.assessment audio/x.wav assessments/x.json  # 生成側の記録と突き合わせ
+.venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # real positive control (minutes)
+.venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # dropped-line check (minutes)
+.venv/bin/python -m probe.loudness audio/*.wav                       # loudness across songs
+.venv/bin/python -m probe.spectrum audio/x.wav recipes/x.json        # band levels per section
+.venv/bin/python -m probe.balance  audio/x.wav recipes/x.json        # "voice − backing" per sung section
+.venv/bin/python -m probe.corpus   audio/*.wav [--balance]            # line songs up by mode
+.venv/bin/python -m probe.assessment audio/x.wav assessments/x.json  # compare with the generator's record
 ```
 
-ジョブのディレクトリに置かれる 4 つのオブジェクトは README の表にあります。
+The four objects in a job directory are listed in a table in the README.
 
-`audio/` `recipes/` `assessments/` `out/` と `*.mp3` `*.wav` は `.gitignore` 済みです。素材はコミットせず、都度 GCS から取り直してください。
+`audio/` `recipes/` `assessments/` `out/` and `*.mp3` `*.wav` are in `.gitignore`. Do not commit material; fetch it from GCS each time.
 
-## mp3 と master.wav のどちらを測るか
+## mp3 or master.wav
 
-ボーカル検出・ASR は mp3 で十分、マスタリング・配信 QC は master.wav です。理由と実測した差は README にあります（whisper は内部で 16kHz モノラルに落とすため、ASR では差そのものが消えます）。
+The mp3 is enough for vocal detection and ASR; mastering and distribution QC use master.wav. The reasons and the measured differences are in the README (whisper downsamples to 16kHz mono internally, so for ASR the difference disappears).
 
-## アーキテクチャ
+## Architecture
 
-`probe/__main__.py`（表示のみ）→ `separate.py`（分離）→ `vocals.py`（測定）→ `recipe.py`（区間の定義）という一方向の流れです。コードを読む前に要る前提が4つあります。
+A one-way flow: `probe/__main__.py` (display only) → `separate.py` (separation) → `vocals.py` (measurement) → `recipe.py` (section definitions). Four premises are needed before reading the code.
 
-**インスト指定の判定は生成側のプロンプト規約に依存している。** `recipe.py` の `INSTRUMENTAL_MARKER = "Instruments only"` が、そのセクションを楽器のみと見なす唯一の根拠です。歌詞タグ `[Verse]` が `sections[].name` と完全一致する前提（`parse_lyrics`）も同じで、生成側の文言が変われば追随が要ります。
+**Detecting instrumental sections depends on the generator's prompt convention.** `INSTRUMENTAL_MARKER = "Instruments only"` in `recipe.py` is the only basis for treating a section as instruments only. The assumption that lyric tags like `[Verse]` match `sections[].name` exactly (`parse_lyrics`) is the same kind of dependency; if the generator's wording changes, this has to follow.
 
-**歌とシンセの区別に帯域エネルギーを使わない。** EDM の saw 系パッドやコードは歌声と同じ帯域に倍音ごと乗るため、帯域だけでは分離できません。`separate.py` は demucs で伴奏を実際に除去してから測ります（MPS で3分の曲に20秒程度、stem が既にあれば再実行しません）。
+**Band energy is not used to tell voice from synths.** EDM saw pads and chords sit in the same band as the voice, harmonics and all, so bands alone cannot separate them. `separate.py` removes the backing with demucs before measuring (about 20 s for a 3-minute song on MPS; skipped if the stem exists).
 
-**閾値は絶対値ではなく曲ごとの相対。** 物差しはその曲の歌唱セクションの RMS 中央値（`vocals.py: sung_reference`）です。`VOCAL_MARGIN_DB` と `ACTIVE_RATIO_THRESHOLD` は役割が違い、**どちらも外せません**。検出できる下限は歌唱に対して約 −18dB で、これは閾値ではなく分離の質で決まる限界です（陽性対照は `scripts/calibrate.py`、実測表は README）。
+**Thresholds are relative to each song, not absolute.** The yardstick is the median RMS of the song's sung sections (`vocals.py: sung_reference`). `VOCAL_MARGIN_DB` and `ACTIVE_RATIO_THRESHOLD` play different roles and **neither can be removed**. The detection floor is about −18dB relative to the singing, a limit set by separation quality, not by a threshold (positive control in `scripts/calibrate.py`, measured table in the README).
 
-**セクション境界に接した声は、区間の中身から外して測る。** 歌い出しは境界の手前から始まり（弱起）、歌尾は境界を越えて伸びるため、区間平均が数十 dB 跳ねます。外すのは**隣が歌唱セクションである側の端だけ**で、上限は `BOUNDARY_BLEED_SECONDS`。根拠の実測と、上限を超えた分を途中まで外さない理由は `vocals.py` のコメントにあります。
+**Voice touching a section boundary is excluded from the section's core.** A line can start before the boundary (a pickup) and a held ending can run past it, which makes the section average jump by tens of dB. Only **the edge next to a sung section** is excluded, capped at `BOUNDARY_BLEED_SECONDS`. The measurements behind it, and why a run over the cap is not partly excluded, are in the comments in `vocals.py`.
 
-音源がレシピの宣言尺より短いことは普通に起きます（Lyria が Outro を畳む）。`vocals.py` は各区間を実尺で clamp し、`SectionStats.truncated` で不足を報告します。
+Audio shorter than the recipe is normal (Lyria folds the Outro). `vocals.py` clamps each section to the real length and reports the shortfall with `SectionStats.truncated`.
 
-### 歌詞照合（lyrics.py）
+### Lyric check (lyrics.py)
 
-ASR は素直に使うと、歌われている行を「落ちた」と報告します。踏んだ地雷と効かなかった対処は `transcribe` と `trim_to_voice` の docstring にまとめてあり、変えてはいけないのは3点です。
+Used naively, ASR reports sung lines as dropped. The pitfalls hit and the fixes that failed are in the docstrings of `transcribe` and `trim_to_voice`; three things must not change.
 
-- **期待した歌詞を `initial_prompt` に渡さない。** 認識率は上がりますが、検証したい対象を答えとして渡すことになります。
-- **書き起こしはセクションごとに切る。それでも残る幻聴を止めたのは `hallucination_silence_threshold` だけ。** 末尾の無音詰め、`vad_filter=True`、`no_speech_threshold` を下げるのはいずれも効きませんでした。
-- **声が一度も鳴らない区間は書き起こしに回さない**（`trim_to_voice`）。行が丸ごと落ちたセクションはまさにこの形なので、幻聴で埋まると検査そのものが意味を失います。声の判定は区間の中だけで行い、前後の余白だけを区間の外から取ります（逆にすると、どちらかの失敗が戻ります。理由は docstring）。
+- **Never pass the expected lyrics as `initial_prompt`.** Recognition improves, but it hands over the answer to what is being checked.
+- **Transcribe per section. The only thing that stopped the remaining hallucinations was `hallucination_silence_threshold`.** Trimming trailing silence, `vad_filter=True` and a lower `no_speech_threshold` all failed.
+- **Never transcribe a section where the voice never sounds** (`trim_to_voice`). A section that lost all its lines looks exactly like that, and filling it with hallucinations defeats the check. Voice is judged inside the section only, while the padding comes from outside it (doing it the other way brings one of the failures back; see the docstring).
 
-一致率の数え方と閾値 45% の根拠は `_coverage` / `COVERAGE_THRESHOLD` のコメント、校正に使った実測は `tests/test_lyrics.py::test_threshold_sits_between_the_two_groups` に固定してあります。
+How coverage is counted and why the threshold is 45 % are in the comments on `_coverage` / `COVERAGE_THRESHOLD`; the calibration measurements are pinned in `tests/test_lyrics.py::test_threshold_sits_between_the_two_groups`.
 
-### 生成側の記録との突き合わせ（assessment.py）
+### Comparing with the generator's record (assessment.py)
 
-`assessment.json` は生成側が mp3 を測った記録で（真正ピークと LUFS だけは、`loudness_from_master: true` なら `master.wav` を測った値）、こちらが測るのは wav です。**同じ量を別の対象で測っているので、値は一致しません。**差が符号化と padding で説明が付く範囲かどうかを見るために、`inspector.go` と同じ測り方（チャンネル平均の 1 波形、2 次バンドパス 1 段、50ms 窓の無音判定）を再実装しています。`spectrum.py` の 4 次バターワースとは別物で、混ぜると差の出どころが分からなくなります。項目ごとの差の説明は README の表と `assessment.measure` / `compare` のコメントにあります。
+`assessment.json` is the generator measuring the mp3 (true peak and LUFS come from `master.wav` only when `loudness_from_master: true`), while this measures the wav. **The same quantities on different targets, so the values do not match.** To see whether a difference is explained by encoding and padding, it reimplements `inspector.go`'s method (one channel-averaged waveform, a single second-order band-pass, 50ms silence windows). That is not `spectrum.py`'s fourth-order Butterworth; mixing them would hide where a difference comes from. The explanation per item is in the README table and the comments on `assessment.measure` / `compare`.
 
-### 帯域計測（spectrum.py）
+### Band measurement (spectrum.py)
 
-生成側のマスタリング処理が持つ定数（`acrossover=split=6000 10000`、`acompressor=threshold`）を検証するための計測です。セクション全体の RMS ではなく `_short_term_dbfs`（50ms 窓）を判断に使います。
+A measurement to check the generator's mastering constants (`acrossover=split=6000 10000`, `acompressor=threshold`). Decisions use `_short_term_dbfs` (50ms windows), not the whole-section RMS.
 
-「圧縮域」の閾値は固定値ではなく、**`assessment.json` の `mastering`（生成側の `MasteringSettings`）から読みます。**記録が無い曲では列を出しません。理由と、閾値が 2026-08-15 に相対化された経緯は `BandLevels` の前のコメントにあります。
+The threshold for the "over" column is not fixed; **it is read from `mastering` in `assessment.json` (the generator's `MasteringSettings`).** Songs without the record get no column. The reason, and how the threshold became relative on 2026-08-15, are in the comment before `BandLevels`.
 
-**`CROSSOVER_HZ` は生成側のチェーン（`masterer.go` の `processingChain`）と必ず同じ値にしてください。**下限は 2026-09-05 に 4000Hz から 6000Hz へ動いており、理由はその定数のコメントにあります。圧縮対象から外れた 4-6kHz は `PRESENCE_HZ` で切って別列に出しますが、判定には使いません。
+**`CROSSOVER_HZ` must always equal the generator's chain (`processingChain` in `masterer.go`).** The lower edge moved from 4000Hz to 6000Hz on 2026-09-05; the reason is in that constant's comment. 4-6kHz, no longer compressed, is cut at `PRESENCE_HZ` and shown as a separate column, but not used for the verdict.
 
-## 方針
+## Policy
 
-**判定は出すが、止めない。** 違反を見つけても失敗扱いにはせず、数字と根拠を並べて人間に返します。生成品質の問題はプロンプト調整と手動での作り直しで対処する運用のため、自動ゲートは入れません。
+**It gives a verdict but never blocks.** A violation is not a failure; it returns the numbers and the reasons to a human. Quality problems are handled by adjusting prompts and regenerating by hand, so there is no automatic gate.
 
-## 既知の問題
+## Known issues
 
-- **真正ピークが −1.0 dBTP をわずかに超える曲がある。** 生成側のリミッターの天井は −2 dBFS（`masterer.go` の `limiterCeiling`。サンプルピーク基準）で、サンプル間のピークは実測で最大 1.1dB 上に出るため、最悪 −0.9 dBTP と推奨に 0.1dB 届きません。10-17〜18 生成の21曲では 2曲が超えました（実測は README）。`loudness_from_master: true` が付かない記録（2026-10-25 より前）の真正ピークは、mp3 を補間の誤った測定器で測った値なので信用せず、`probe.loudness` で測り直してください。
-- **高域圧縮の閾値は要検証。** 相対化のオフセット +2.5dB は、マスタリング後の音源（当時の 4-10kHz）で校正した値を、処理前の入力向けに補正して移したものです（測定方法の差 0.35dB、測定対象の差 1.4dB）。帯域が 09-05 に 6-10kHz へ動いたときも同じ値のままです。**処理前の入力は残らないので、master.wav だけでは確かめられません。**2026-10-29 に生成側が `assessment.json` の `mastering` へ `treble_dbfs` / `treble_threshold_dbfs` / `loudness_gain_db` を残す変更を入れたので、それ以降の曲が溜まれば `probe.corpus` の圧縮量（サビ / Verse）で詰められます。2026-10-28 に 24 曲をログと突き合わせた試算では、オフセットを上げても Verse はほとんど変わらず（+6.0 でも圧縮量 0.35 → 0.20dB）、サビの圧縮と `harsh_treble` の余裕が先に減るため、+2.5 のまま据え置いています（根拠は生成側 `trebleThresholdOffsetDB` のコメント）。それより前の曲は生成側のログ（`マスタリング定数を決めました`）にしか残っていません。
+- **Some songs exceed −1.0 dBTP true peak slightly.** The generator's limiter ceiling is −2 dBFS (`limiterCeiling` in `masterer.go`, by sample peak), and inter-sample peaks measured up to 1.1dB higher, so the worst case is −0.9 dBTP, 0.1dB short of the recommendation. Of 21 songs generated on 10-17/18, two exceeded it (numbers in the README). True peaks in records without `loudness_from_master: true` (before 2026-10-25) were measured on the mp3 with a meter whose interpolation was wrong; do not trust them, and remeasure with `probe.loudness`.
+- **The treble compression threshold needs verification.** The +2.5dB offset of the relative threshold was calibrated on mastered audio (then 4-10kHz) and moved to the unprocessed input with corrections (0.35dB for the method, 1.4dB for the target). It stayed the same when the band moved to 6-10kHz on 09-05. **The unprocessed input is not kept, so master.wav alone cannot confirm it.** On 2026-10-29 the generator started writing `treble_dbfs` / `treble_threshold_dbfs` / `loudness_gain_db` into `mastering` in `assessment.json`, so once enough later songs accumulate, `probe.corpus`'s gain reduction (chorus / verse) can tune it. A trial on 24 songs matched against the logs on 2026-10-28 showed that raising the offset barely changes the verses (0.35 → 0.20dB even at +6.0) while chorus compression and the `harsh_treble` margin shrink first, so it stays at +2.5 (reasoning in the comment on the generator's `trebleThresholdOffsetDB`). Earlier songs only have it in the generator's logs (the line 「マスタリング定数を決めました」).

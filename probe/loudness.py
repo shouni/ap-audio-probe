@@ -1,7 +1,7 @@
-"""複数の曲のラウドネスを測って揃い具合を見る。
+"""Measure the loudness of several songs and see how well they match.
 
-生成側の検査は1曲ずつしか採点しないため、シリーズとして並べたときの
-音量差は構造的に見えません。配信で効くのはそこなので、曲を跨いで比べます。
+The generator's checks score one song at a time, so level differences across a series are structurally
+invisible to it. That is what matters on streaming services, so this compares across songs.
 
     python -m probe.loudness audio/*.wav
 """
@@ -16,10 +16,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# 同じリリースに並べる曲の音量差の許容幅。マスタリングの慣習的な目安です。
+# Allowed level spread for songs released together; a common mastering rule of thumb.
 SPREAD_TOLERANCE_LU = 1.0
 
-# 配信用の真正ピーク上限。ロッシー変換で歪まないための一般的なガイドラインです。
+# True-peak ceiling for distribution; the usual guideline to avoid distortion in lossy encoding.
 TRUE_PEAK_CEILING_DBTP = -1.0
 
 
@@ -36,16 +36,16 @@ class Loudness:
 
 
 def measure(path: Path) -> Loudness:
-    """ffmpeg の loudnorm で BS.1770 の実測値を取る。"""
+    """Measure BS.1770 values with ffmpeg's loudnorm."""
     result = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
          "-af", "loudnorm=print_format=json", "-f", "null", "-"],
         capture_output=True, text=True, check=True,
     )
-    # loudnorm は測定結果を stderr の末尾に JSON で吐きます。
+    # loudnorm prints its measurements as JSON at the end of stderr.
     blocks = re.findall(r"\{[^{}]*\}", result.stderr, re.DOTALL)
     if not blocks:
-        raise RuntimeError(f"loudnorm の出力を解析できません: {path}")
+        raise RuntimeError(f"cannot parse the loudnorm output: {path}")
     data = json.loads(blocks[-1])
 
     return Loudness(
@@ -62,7 +62,7 @@ def render(tracks: list[Loudness]) -> str:
         "-" * 64,
     ]
     for t in tracks:
-        flag = "  ⚠ ピーク高い" if t.peak_is_hot else ""
+        flag = "  ⚠ peak too hot" if t.peak_is_hot else ""
         lines.append(
             f"{t.path.stem[:33]:<34} {t.integrated_lufs:>8.1f} "
             f"{t.true_peak_dbtp:>10.1f} {t.lra:>6.1f}{flag}"
@@ -71,37 +71,37 @@ def render(tracks: list[Loudness]) -> str:
 
     levels = [t.integrated_lufs for t in tracks]
     spread = max(levels) - min(levels)
-    lines.append(f"音量差: {spread:.1f} LU (許容目安 {SPREAD_TOLERANCE_LU:.1f} LU)")
+    lines.append(f"level spread: {spread:.1f} LU (guideline {SPREAD_TOLERANCE_LU:.1f} LU)")
 
     if len(tracks) < 2:
-        lines.append("比較には2曲以上が要ります。")
+        lines.append("Comparing needs two or more songs.")
     elif spread > SPREAD_TOLERANCE_LU:
         loudest = max(tracks, key=lambda t: t.integrated_lufs)
         quietest = min(tracks, key=lambda t: t.integrated_lufs)
         lines.append(
-            f"⚠ 揃っていません。最大 {loudest.path.stem[:24]} と "
-            f"最小 {quietest.path.stem[:24]} で {spread:.1f} LU 差があります。"
+            f"⚠ not matched: the loudest {loudest.path.stem[:24]} and "
+            f"the quietest {quietest.path.stem[:24]} are {spread:.1f} LU apart."
         )
     else:
-        lines.append("✓ シリーズとして並べても違和感の出ない範囲です。")
+        lines.append("✓ within range to sit together as a series.")
 
     hot = [t for t in tracks if t.peak_is_hot]
     if hot:
         lines.append(
-            f"⚠ 真正ピークが {TRUE_PEAK_CEILING_DBTP:.1f} dBTP を超えている曲が "
-            f"{len(hot)} 本あります(ロッシー変換で歪む恐れ)。"
+            f"⚠ {len(hot)} song(s) exceed {TRUE_PEAK_CEILING_DBTP:.1f} dBTP true peak "
+            f"(may distort in lossy encoding)."
         )
     return "\n".join(lines)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tracks", type=Path, nargs="+", help="測る音源(master.wav 推奨)")
+    parser.add_argument("tracks", type=Path, nargs="+", help="audio to measure (master.wav recommended)")
     args = parser.parse_args()
 
     tracks = []
     for path in args.tracks:
-        print(f"測定中: {path.name} ...", file=sys.stderr)
+        print(f"measuring: {path.name} ...", file=sys.stderr)
         tracks.append(measure(path))
 
     print()

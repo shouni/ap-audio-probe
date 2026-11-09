@@ -1,4 +1,4 @@
-"""歌詞照合の回帰テスト。ASR は通さず、突き合わせの部分だけを速く確かめます。"""
+"""Regression tests for lyric matching. No ASR; only the comparison is checked, quickly."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from probe.lyrics import (
 )
 from probe.recipe import Recipe, Section, parse_lyrics
 
-# 実際に Lyria の音源を書き起こした結果。英語のフックは一貫して聞き違えられ、
-# 「境界」は「妖怪」になりました。どちらも行そのものは歌われています。
+# An actual transcript of Lyria audio. The English hook was misheard every time and 「境界」 became 「妖怪」;
+# both lines were in fact sung.
 HEARD = (
     "Speed the road 届かない場所 そぎ落としたノイズを捨てろ Speed the road 研ぎ澄ます光 "
     "妖怪よ ここに行け 闇よ 先解き放て Speed the road 打ち鳴らせ鼓動 余計なものは持ち込む"
@@ -35,7 +35,7 @@ def test_parse_lyrics_splits_on_section_tags():
 
 
 def test_to_kana_drops_latin():
-    """日本語 ASR は混ざった英語を安定して聞き取れないため、比較から外す。"""
+    """Japanese ASR cannot reliably hear mixed-in English, so it is left out of the comparison."""
     assert to_kana("Split the role 届かない場所") == to_kana("届かない場所")
 
 
@@ -43,13 +43,13 @@ def test_english_only_line_is_not_verifiable():
     line = LineCheck("Split the role", 0.0)
 
     assert not line.verifiable
-    assert line.sung  # 確かめられない行を「落ちた」と報告してはいけない
+    assert line.sung  # a line that cannot be checked must not be reported as dropped
 
 
 @pytest.mark.parametrize("line", [
     "削ぎ落としたノイズを捨てろ",
     "闇を裂き解き放て",
-    "境界をここに引け",  # 「妖怪よここに行け」と誤認識されても歌われている
+    "境界をここに引け",  # sung, even though it was heard as 「妖怪よここに行け」
 ])
 def test_sung_lines_clear_the_threshold(line):
     assert _cov(line) >= COVERAGE_THRESHOLD
@@ -61,12 +61,12 @@ def test_sung_lines_clear_the_threshold(line):
     "アスファルトの向こうへ走れ",
 ])
 def test_absent_lines_stay_below_the_threshold(line):
-    """歌われていない行が閾値を超えると、行落ちを見逃す。"""
+    """If unsung lines cross the threshold, dropped lines are missed."""
     assert _cov(line) < COVERAGE_THRESHOLD
 
 
 def test_threshold_sits_between_the_two_groups():
-    """陽性と陰性が閾値を挟んで分かれていることを、余裕込みで固定する。"""
+    """Pin, with margin, that the positive and negative cases sit on either side of the threshold."""
     sung = min(_cov(l) for l in ["削ぎ落としたノイズを捨てろ", "境界をここに引け", "闇を裂き解き放て"])
     absent = max(_cov(l) for l in ["夏の終わりに手を振った", "遠い街の冬を数えて"])
 
@@ -90,7 +90,7 @@ def test_check_reports_missing_lines_per_section():
 
 
 SR = 16000
-# 歌唱が -20dBFS、分離漏れが -50dBFS。実測(-18dB / -50dB)に合わせた値です。
+# singing at -20dBFS, separation leakage at -50dBFS, matching measurements (-18dB / -50dB)
 LOUD, QUIET = 0.1, 0.003
 FLOOR = -40.0
 
@@ -104,11 +104,10 @@ def _clip(loud_from: float, loud_to: float, seconds: float = 12.0) -> np.ndarray
 
 
 def test_a_voiceless_clip_yields_nothing_to_transcribe():
-    """声が無い区間は空を返す。これが trim_to_voice の主目的。
+    """A section without voice returns nothing; that is trim_to_voice's main purpose.
 
-    渡せば whisper が幻聴を返し(実測では分離漏れだけの Outro が
-    「ありがとうございました。」になった)、行が丸ごと落ちたセクションを
-    見逃すことになります。
+    Given it, whisper hallucinates (an outro of only separation leakage became 「ありがとうございました。」),
+    and a section that lost all its lines would be missed.
     """
     silent = _clip(0.0, 0.0, seconds=12.0)
 
@@ -128,7 +127,7 @@ def test_leading_silence_is_trimmed():
 
 
 def test_padding_keeps_the_onset():
-    """余白を残さないと子音の立ち上がりを切ってしまう。"""
+    """Without padding, consonant onsets would be cut."""
     clip = _clip(2.0, 10.0, seconds=12.0)
     trimmed = trim_to_voice(clip, FLOOR, SR)
 
@@ -136,9 +135,9 @@ def test_padding_keeps_the_onset():
 
 
 def test_padding_reaches_outside_the_section():
-    """声が区間の頭から鳴っていても、余白は区間の外から取る。
+    """Even when the voice starts right at the section head, the padding is taken from outside the section.
 
-    余白が 0 になると whisper が区間を丸ごと幻聴で潰す(実測: 120 BPM の Verse)。
+    With zero padding, whisper flattens the whole section into a hallucination (seen on a 120 BPM Verse).
     """
     audio = _clip(2.0, 12.0, seconds=12.0)
     start = 2 * SR
@@ -149,8 +148,8 @@ def test_padding_reaches_outside_the_section():
 
 
 def test_a_neighbours_voice_does_not_make_a_silent_section_voiced():
-    """声の判定は区間の中だけで行う。隣の歌尾で「声あり」になれば、丸ごと落ちた行を見逃す。"""
-    audio = _clip(0.0, 2.0, seconds=12.0)  # 0-2s が隣の歌唱、2s 以降が調べたい区間
+    """Voice is judged inside the section only. If a neighbour's held ending counted as voice, a fully dropped section would be missed."""
+    audio = _clip(0.0, 2.0, seconds=12.0)  # 0-2 s is the neighbour's singing; from 2 s is the section under test
 
     assert trim_to_voice(audio, FLOOR, SR, start=2 * SR, end=len(audio)).size == 0
 

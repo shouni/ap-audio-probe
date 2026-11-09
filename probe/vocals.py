@@ -1,4 +1,4 @@
-"""ボーカル stem をセクション境界で切り、区間ごとの声の量を測る。"""
+"""Cut the vocal stem at section boundaries and measure how much voice each section has."""
 
 from __future__ import annotations
 
@@ -10,25 +10,24 @@ import soundfile as sf
 
 from .recipe import Recipe, Section
 
-# 判定はすべて「その曲の歌唱区間と比べてどうか」で決めます。demucs は伴奏を完全には
-# 除去しきれず微量が漏れ、その量も曲ごとのレベルも揃わないため、絶対値で切ると曲を
-# 跨いで機能しません。基準は sung_reference()。
+# Every verdict is relative to the song's own sung sections. demucs never removes the backing completely;
+# a little leaks, and neither the leak nor the song's level is consistent, so absolute thresholds fail
+# across songs. The reference is sung_reference().
 
-# 区間の RMS が基準値からこの幅に収まっていれば、そこに声が乗っていると見なす。
+# A section whose RMS is within this margin of the reference is taken to carry voice.
 VOCAL_MARGIN_DB = 12.0
 
-# 基準値からこの幅だけ下を、有声フレームと見なす床にする。
+# Frames louder than the reference minus this are counted as voiced.
 FRAME_FLOOR_DB = 20.0
 FRAME_SECONDS = 0.05
 
-# 有声フレームがこの割合を超えても「声あり」とする。RMS の条件だけでは歌唱より 12dB
-# 小さい混入までしか届かず、-18dB を拾っているのはこちらです(scripts/calibrate.py)。
+# More voiced frames than this share also means "vocals". The RMS condition alone only reaches injections
+# 12dB below the singing; this is what catches -18dB (scripts/calibrate.py).
 ACTIVE_RATIO_THRESHOLD = 0.20
 
-# 歌い出しは境界の手前から始まり(弱起)、歌尾は境界を越えて伸びます。この長さまでは
-# 隣からの食い込みと見なし、インスト区間の中身から外して測ります。実測で見た食い込みは
-# 0.9 秒(156 BPM の約2拍)で、そこに倍の余裕を取りつつ、フレーズ1つぶんには届かない
-# 長さとしてこの上限を置いています。
+# A line can start before the boundary (a pickup) and a held ending can run past it. Up to this length it is
+# treated as bleed from the neighbour and excluded from the instrumental section. The bleed seen in practice
+# was 0.9 s (about two beats at 156 BPM); this cap doubles that while staying shorter than a phrase.
 BOUNDARY_BLEED_SECONDS = 2.0
 
 SILENCE_DBFS = -120.0
@@ -40,7 +39,7 @@ def dbfs(x: np.ndarray) -> float:
 
 
 def frame_levels(x: np.ndarray, sample_rate: int) -> np.ndarray:
-    """FRAME_SECONDS ごとの短時間 RMS を dBFS で返す。端数のフレームは捨てる。"""
+    """Short-time RMS per FRAME_SECONDS in dBFS. A trailing partial frame is dropped."""
     frame = int(FRAME_SECONDS * sample_rate)
     if frame <= 0 or x.size < frame:
         return np.empty(0, dtype=np.float64)
@@ -51,7 +50,7 @@ def frame_levels(x: np.ndarray, sample_rate: int) -> np.ndarray:
 
 
 def sung_reference(mono: np.ndarray, sample_rate: int, recipe: Recipe) -> float:
-    """歌唱セクションの RMS 中央値。判定がすべて相対で見る、その曲自身の物差し。"""
+    """Median RMS of the sung sections: the song's own yardstick that every verdict is relative to."""
     seconds = len(mono) / sample_rate
     levels = []
     for section in recipe.sections:
@@ -64,7 +63,7 @@ def sung_reference(mono: np.ndarray, sample_rate: int, recipe: Recipe) -> float:
 
 
 def _run_length(voiced: np.ndarray, *, from_end: bool) -> int:
-    """先頭(または末尾)から続く有声フレームの本数。"""
+    """Number of consecutive voiced frames from the start (or the end)."""
     ordered = voiced[::-1] if from_end else voiced
     silent = np.flatnonzero(~ordered)
     return int(silent[0]) if silent.size else int(ordered.size)
@@ -77,7 +76,7 @@ class SectionStats:
     rms_dbfs: float
     peak_dbfs: float
     active_ratio: float
-    # 隣の歌唱セクションから食い込んだぶんとして、測定から外した秒数。
+    # seconds excluded from the measurement as bleed from a neighbouring sung section
     head_bleed: float = 0.0
     tail_bleed: float = 0.0
 
@@ -102,9 +101,9 @@ class Report:
         return self.recipe.declared_duration - self.audio_seconds
 
     def has_vocals(self, s: SectionStats) -> bool:
-        """区間の平均か、声の立っている時間の長さか、どちらかが基準に届けば声あり。
+        """Vocals if either the section average or the time with voice reaches its threshold.
 
-        役割が違うのでどちらも外せません。根拠は ACTIVE_RATIO_THRESHOLD を参照。
+        They play different roles, so neither can go; see ACTIVE_RATIO_THRESHOLD for why.
         """
         return (
             s.rms_dbfs > self.sung_reference_dbfs - VOCAL_MARGIN_DB
@@ -113,7 +112,7 @@ class Report:
 
     @property
     def violations(self) -> list[SectionStats]:
-        """インスト指定なのに声が乗っているセクション。"""
+        """Sections marked instrumental that carry voice."""
         return [s for s in self.stats if s.section.instrumental and self.has_vocals(s)]
 
 
@@ -127,7 +126,7 @@ def analyse(vocals_wav: Path, recipe: Recipe) -> Report:
         lo, hi = int(s.start * sr), int(end * sr)
         return mono[lo:hi], end
 
-    # 先に歌唱セクションの基準値を出す。これが全判定の物差しになる。
+    # Compute the sung-section reference first; every verdict is measured against it.
     reference = sung_reference(mono, sr, recipe)
 
     frame = int(FRAME_SECONDS * sr)
@@ -143,9 +142,9 @@ def analyse(vocals_wav: Path, recipe: Recipe) -> Report:
         frame_db = frame_levels(chunk, sr)
         voiced = frame_db > floor
 
-        # 外すのは隣が歌唱セクションである側の端だけで、中ほどに現れる声はそのまま
-        # 残ります。上限を超える長さは、途中まで外すと残りだけが違反として上がって
-        # 数字が読めなくなるため、まるごと区間の中身として測ります。
+        # Only the edge next to a sung section is excluded; voice in the middle stays. A run longer than the
+        # cap is measured whole as part of the section, because excluding part of it would report only the
+        # remainder as a violation and make the numbers unreadable.
         head = tail = 0
         if section.instrumental and voiced.size and not voiced.all():
             limit = int(BOUNDARY_BLEED_SECONDS / FRAME_SECONDS)

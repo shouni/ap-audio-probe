@@ -1,11 +1,11 @@
-"""セクション別の帯域バランスを測る。
+"""Measure the band balance per section.
 
-生成側のマスタリング処理は 6-10kHz だけを圧縮しています。その定数がサビと Verse で
-どう働いているかを、曲を跨いで測ります。閾値は assessment.json から読みます
-（「圧縮域」と「圧縮量」の列の説明は BandLevels の前のコメントを参照）。
+The generator's mastering compresses 6-10kHz only. This measures, across songs, how those constants behave
+in choruses and verses. The threshold is read from assessment.json (the "over" and "GR" columns are
+explained in the comment before BandLevels).
 
-測れるのは処理後の音だけです。コンプレッサがどれだけ効いたかは処理前と比べないと
-分かりません。「効いている」ことは言えても「必要である」ことの証明にはなりません。
+Only the processed audio can be measured. How much the compressor did would need the unprocessed audio for
+comparison. It can show that compression "is working", never that it "is needed".
 
     python -m probe.spectrum audio/foo.wav recipes/foo.json
 """
@@ -25,34 +25,34 @@ from .assessment import load as load_assessment
 from .recipe import Recipe, Section
 from .vocals import SILENCE_DBFS, dbfs
 
-# マスタリング処理の acrossover=split=6000 10000 に合わせた帯域です。圧縮がかかるのは
-# この二つに挟まれた 6-10kHz だけで、生成側は body / treble / air と呼んでいます。
+# Bands matching the mastering's acrossover=split=6000 10000. Only the 6-10kHz between them is compressed;
+# the generator calls the three bands body / treble / air.
 #
-# 下限は 2026-09-05 まで 4000 でした。コンプレッサはミックス済みの音にかかるので声と
-# 楽器を区別できず、子音と存在感が乗る 4-6kHz を含めると、サビで声が張るほどその声自身が
-# 閾値を踏みます（「ボーカルが籠る」の原因）。生成側はこの日、圧縮する側と閾値を測る側の
-# 両方を 6000 へ動かしました。ここも同じ値でなければ、圧縮されていない帯域を圧縮量として
-# 読むことになります。
+# The lower edge was 4000 until 2026-09-05. The compressor works on the full mix and cannot tell voice from
+# instruments, so including 4-6kHz, where consonants and presence sit, made the voice itself cross the
+# threshold the harder it sang in the chorus (the cause of the "muffled vocal"). That day the generator moved
+# both the compressed band and the threshold measurement to 6000. This must match, or uncompressed bands
+# would be read as gain reduction.
 CROSSOVER_HZ = (6000.0, 10000.0)
 
-# 圧縮対象から外れた 4-6kHz を、それより下と分けて出すための境界です。
+# Boundary that shows 4-6kHz, no longer compressed, separately from what lies below it.
 #
-# 生成側のチェーンでは 6kHz 以下がひとまとめ（body）で、この線は存在しません。それでも
-# 分けて表示するのは、2026-09-05 の変更で無処理に戻ったのがまさにこの帯域で、「声の芯が
-# 戻ったか」を見る列が要るためです。判定（圧縮域）には使いません。
+# The generator's chain treats everything below 6kHz as one band (body) and has no such line. It is shown
+# separately because this exact band returned to unprocessed on 2026-09-05, and a column is needed to see
+# whether the core of the voice came back. It is not used for the "over" judgement.
 PRESENCE_HZ = 4000.0
 
-# キックとベースが乗る帯域。低域のアタック感（LOW_PUNCH_PERCENTILES）を測るためだけの線で、
-# マスタリング処理には対応する分割がありません。
+# The band where kick and bass sit. Only used to measure low-end punch (LOW_PUNCH_PERCENTILES); the
+# mastering has no matching split.
 LOW_PUNCH_HZ = (40.0, 120.0)
 
-# 低域の短時間レベルの上位値と中央値の差を「アタック感」として出します。キックが立っていれば
-# 打点だけが持ち上がって差が開き、ベースやパッドが低域を埋めていれば差が詰まります。
+# Reports the gap between the high percentile and the median of the low band's short-term level as "punch".
+# A standing kick lifts only the hits and widens the gap; bass or pads filling the low end narrow it.
 #
-# 2026-10-28 に、同じ指示から作った曲を Flow Music 版と比べたときに要った量です。曲全体
-# (-40dB 床) で測ると sparkle_rock の 3 曲が 3.8〜5.3dB、edm_pop 20 曲の中央値が 8.1dB、
-# Flow Music 版が 8.0dB でした。生成側のマスタリングを Flow Music 版に掛けても 7.7 → 7.6dB
-# で、この差はマスタリングではなく生成で決まっています。合否の線は置いていません。
+# Needed on 2026-10-28 to compare songs built from the same instructions with a Flow Music version. Over whole
+# songs (-40dB floor), three sparkle_rock songs measured 3.8–5.3dB, the median of 20 edm_pop songs 8.1dB,
+# and the Flow Music version 8.0dB. Running the generator's mastering on the Flow Music version moved it only
+# 7.7 → 7.6dB, so the gap is decided by generation, not mastering. There is no pass line.
 LOW_PUNCH_PERCENTILES = (95, 50)
 
 
@@ -67,36 +67,35 @@ def _band(x: np.ndarray, sr: int, low: float | None, high: float | None) -> np.n
     return sosfiltfilt(sos, x)
 
 
-# コンプレッサの検出器に合わせた短時間窓。マスタリング処理の attack=5ms / release=80ms が
-# 追随する時間スケールです。セクション全体の RMS は 36 秒を平均してしまうため、
-# 圧縮がかかるかどうかの判断には使えません。
+# Short-time window matching the compressor's detector, the time scale that the mastering's attack=5ms /
+# release=80ms follows. A whole-section RMS averages 36 seconds and cannot tell whether compression engages.
 DETECTOR_WINDOW_SECONDS = 0.05
 DETECTOR_HOP_SECONDS = 0.01
 
 
-# 「圧縮域」の列は、生成側が assessment.json に残した閾値（mastering.treble_threshold_dbfs）に
-# 音量合わせのゲインを足し、master.wav の上で引き直した線で数えます。
+# The "over" column counts against the threshold the generator recorded in assessment.json
+# (mastering.treble_threshold_dbfs) plus the loudness-matching gain, i.e. the line as it falls on master.wav.
 #
-# 以前はマスタリング処理の固定値（acompressor=threshold=0.025、-32.0dBFS）で数えていました。
-# 11曲を測るとサビの超過時間が 11〜43% と 4 倍ばらついたため、生成側は 2026-08-15 に閾値を
-# 曲ごとの相対へ変えました（同じ 11曲でばらつきは 31pt → 18pt。いずれも当時の 4-10kHz での
-# 数字で、今の 6-10kHz とは比べられません）。それ以降の曲では、固定値で数えたこの列は
-# 実際にかかった量を表していませんでした。曲ごとの閾値はログにしか残らなかったため、2026-10-29 に
-# 生成側の記録へ載せる変更を入れ、ここはそれを読むだけにしています。記録の無い曲では列を
-# 出しません。推測した閾値で数えると、読む人が実際の量と取り違えます。
+# It used to count against the mastering's fixed value (acompressor=threshold=0.025, -32.0dBFS). Across 11
+# songs the chorus time over it varied fourfold (11–43 %), so on 2026-08-15 the generator made the threshold
+# relative to each song (spread on the same 11 songs fell from 31 pt to 18 pt; both figures are for the
+# 4-10kHz band of the time and do not compare with today's 6-10kHz). From then on, counting against the fixed
+# value no longer showed what was actually applied. The per-song threshold was only in the logs, so on
+# 2026-10-29 the generator started recording it, and this just reads it. Songs without the record get no
+# column: counting against a guessed threshold would be mistaken for the real amount.
 #
-# コンプレッサの出力が閾値を超えるのは入力が超えたときだけなので（静特性では単調）、
-# 処理後の音で数えた時間は、圧縮が掛かった時間の近似になります。帯域の切り方は
-# acrossover と違い、平均で 0.35dB ずれます（masterer.go の trebleThresholdOffsetDB）。
+# A compressor's output only exceeds the threshold when its input did (the static curve is monotonic), so time
+# counted on the processed audio approximates the time compression was applied. The band split differs from
+# acrossover and is off by 0.35dB on average (masterer.go's trebleThresholdOffsetDB).
 #
-# 「圧縮量」の列は、閾値を超えたフレームが処理前にどれだけ大きかったかを静特性から逆算し、
-# 縮めた分の dB をセクションで平均したものです。超えていないフレームは 0 として数えます。
-# 時間の割合だけでは量が分かりません。2026-10-28 の 24 曲では、Verse の超過時間は中央値 7% と
-# 設計時の 5% を上回って見えましたが、平均の圧縮量は 0.35dB しかなく（サビは 1.84dB）、
-# 閾値を超えていたのはシンバルや子音のように瞬間的に突き出た山でした。knee と
-# アタック/リリースは無視しているので、0.5dB 単位で詰められる精度はありません。
+# The "GR" column works back from the static curve how loud each frame over the threshold was before
+# processing, and averages the dB removed over the section; frames under the threshold count as 0. The time
+# share alone does not give the amount: on 24 songs from 2026-10-28, verses spent a median 7 % over the
+# threshold, above the 5 % the design assumed, but the average reduction was only 0.35dB (1.84dB in choruses);
+# what crossed it were brief peaks such as cymbals and consonants. Knee and attack/release are ignored, so it
+# is not precise enough to tune in 0.5dB steps.
 
-# マスタリング処理の acompressor=ratio=4。圧縮量の逆算にだけ使います。
+# The mastering's acompressor=ratio=4. Only used to work back the gain reduction.
 COMPRESSOR_RATIO = 4.0
 
 
@@ -104,26 +103,26 @@ COMPRESSOR_RATIO = 4.0
 class BandLevels:
     section: Section
     low: float
-    # presence は 4-6kHz です。2026-09-05 以降は圧縮対象ではありません。
+    # presence is 4-6kHz; not compressed since 2026-09-05.
     presence: float
-    # treble が圧縮対象の 6-10kHz、air は 10kHz 以上です。
+    # treble is the compressed 6-10kHz; air is above 10kHz.
     treble: float
     air: float
-    # treble_peak は 6-10kHz の短時間レベルの上位値、over_ratio はそれが閾値を超えた時間の割合です。
-    # 閾値が分からない曲では over_ratio は None です。
+    # treble_peak is the high percentile of the 6-10kHz short-term level; over_ratio is the share of time it
+    # exceeds the threshold. None when the threshold is unknown.
     treble_peak: float
     over_ratio: float | None
-    # gain_reduction は 6-10kHz を縮めた量のセクション平均（dB）です。閾値が分からない曲では None です。
+    # gain_reduction is the section average of the 6-10kHz reduction (dB). None when the threshold is unknown.
     gain_reduction: float | None
-    # low_punch は 40-120Hz の短時間レベルの上位値と中央値の差（dB）です。LOW_PUNCH_PERCENTILES を参照。
+    # low_punch is the gap between the high percentile and the median of the 40-120Hz short-term level (dB); see LOW_PUNCH_PERCENTILES.
     low_punch: float
 
 
 def analyse(audio_path: Path, recipe: Recipe, threshold_dbfs: float | None = None) -> list[BandLevels]:
-    """セクションごとの帯域レベルを測る。
+    """Measure band levels per section.
 
-    threshold_dbfs は master.wav の上で見た圧縮の閾値です（MasteringSettings.master_threshold_dbfs）。
-    省くと over_ratio と gain_reduction は None になります。
+    threshold_dbfs is the compression threshold as seen on master.wav (MasteringSettings.master_threshold_dbfs).
+    Without it, over_ratio and gain_reduction are None.
     """
     data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
     mono = data.mean(axis=1)
@@ -163,10 +162,10 @@ def analyse(audio_path: Path, recipe: Recipe, threshold_dbfs: float | None = Non
 
 
 def gain_reduction(short_term: np.ndarray, threshold_dbfs: float) -> float:
-    """処理後の短時間レベルから、コンプレッサが縮めた量の平均（dB）を逆算する。
+    """Work back the average reduction (dB) applied by the compressor from the processed short-term level.
 
-    比 R の静特性では、閾値を d だけ超えた入力は d / R だけ超えて出てきます。処理後に
-    閾値を e 超えているフレームは、処理前に e * R 超えていたので、縮めた量は e * (R - 1) です。
+    With a static ratio R, an input d over the threshold comes out d / R over. A frame e over after processing
+    was e * R over before, so the reduction is e * (R - 1).
     """
     if not short_term.size:
         return 0.0
@@ -175,7 +174,7 @@ def gain_reduction(short_term: np.ndarray, threshold_dbfs: float) -> float:
 
 
 def low_punch(kick_band: np.ndarray, sr: int) -> float:
-    """40-120Hz に切った信号から、短時間レベルの上位値と中央値の差を返す。"""
+    """From the 40-120Hz signal, return the gap between the high percentile and the median of the short-term level."""
     short_term = _short_term_dbfs(kick_band, sr)
     if not short_term.size:
         return 0.0
@@ -184,7 +183,7 @@ def low_punch(kick_band: np.ndarray, sr: int) -> float:
 
 
 def _short_term_dbfs(x: np.ndarray, sr: int) -> np.ndarray:
-    """短時間窓ごとの RMS を dBFS で返す。コンプレッサの検出器に相当する量。"""
+    """RMS per short window in dBFS, the quantity a compressor's detector sees."""
     window = int(DETECTOR_WINDOW_SECONDS * sr)
     hop = int(DETECTOR_HOP_SECONDS * sr)
     if x.size < window:
@@ -200,7 +199,7 @@ def render(title: str, levels: list[BandLevels], threshold_dbfs: float | None = 
     lines = [
         f"\n{title}",
         f"{'section':<11}{'<4k':>9}{'4-6k':>9}{'6-10k':>9}{'>10k':>9}"
-        f"{'6-10k 短時間':>11}{'圧縮域':>5}{'圧縮量':>6}{'低域起伏':>8}",
+        f"{'6-10k short':>11}{'over':>8}{'GR':>9}{'punch':>8}",
         "-" * 86,
     ]
     for lv in levels:
@@ -221,38 +220,38 @@ def render(title: str, levels: list[BandLevels], threshold_dbfs: float | None = 
         c = float(np.mean([lv.treble for lv in chorus]))
         v = float(np.mean([lv.treble for lv in verse]))
         cp = float(np.mean([lv.treble_peak for lv in chorus]))
-        lines.append(f"6-10k サビ {c:.1f}dB / Verse {v:.1f}dB / 差 {c - v:.1f}dB")
+        lines.append(f"6-10k chorus {c:.1f}dB / verse {v:.1f}dB / diff {c - v:.1f}dB")
         if threshold_dbfs is None:
             lines.append(
-                f"サビの短時間レベル {cp:.1f}dB / 閾値は不明"
-                "（assessment.json に mastering が無い曲。圧縮域の列も出しません）"
+                f"chorus short-term level {cp:.1f}dB / threshold unknown"
+                " (assessment.json has no mastering record; the over column is left out too)"
             )
         else:
             lines.append(
-                f"サビの短時間レベル {cp:.1f}dB / 閾値 {threshold_dbfs:.1f}dB (master.wav 上)"
-                f"  → {'圧縮がかかる' if cp > threshold_dbfs else '閾値に届かない'}"
+                f"chorus short-term level {cp:.1f}dB / threshold {threshold_dbfs:.1f}dB (on master.wav)"
+                f"  → {'compressed' if cp > threshold_dbfs else 'below the threshold'}"
             )
-        # 4-6kHz は 2026-09-05 に圧縮対象から外れた帯域です。声の芯が残っているかを
-        # 曲を跨いで追うための行で、判定には使いません。
+        # 4-6kHz left the compressed band on 2026-09-05. This line tracks across songs whether the core of the
+        # voice survives; it is not used for any judgement.
         cpr = float(np.mean([lv.presence for lv in chorus]))
         vpr = float(np.mean([lv.presence for lv in verse]))
         lines.append(
-            f"4-6k(無処理) サビ {cpr:.1f}dB / Verse {vpr:.1f}dB / 差 {cpr - vpr:.1f}dB"
+            f"4-6k (unprocessed) chorus {cpr:.1f}dB / verse {vpr:.1f}dB / diff {cpr - vpr:.1f}dB"
         )
 
-    # Chorus / Verse 以外の歌唱区間（8 セクション構成の Bridge など）。要約の 2 行は
-    # 「サビだけ抑える」という設計の確認なので、そこへ混ぜずに別に並べます。
+    # Sung sections other than Chorus / Verse (e.g. the Bridge of an 8-section layout). The two summary lines
+    # check the "tame only the chorus" design, so these are listed separately rather than mixed in.
     others = [lv for lv in sung if "Chorus" not in lv.section.name and "Verse" not in lv.section.name]
     if others:
         lines.append(
-            "その他の歌唱区間: "
+            "other sung sections: "
             + " / ".join(f"{lv.section.name} {lv.treble:.1f}dB" for lv in others)
         )
     return "\n".join(lines)
 
 
 def recorded_threshold(audio: Path, assessments: Path) -> float | None:
-    """assessments/<音源の名前>.json に記録された閾値を、master.wav の上の値で返す。"""
+    """Return the threshold recorded in assessments/<audio name>.json, as a value on master.wav."""
     path = assessments / f"{audio.stem}.json"
     if not path.exists():
         return None
@@ -262,13 +261,13 @@ def recorded_threshold(audio: Path, assessments: Path) -> float | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pairs", type=Path, nargs="+", help="audio recipe を交互に並べる")
+    parser.add_argument("pairs", type=Path, nargs="+", help="audio and recipe, alternating")
     parser.add_argument("--assessments", type=Path, default=Path("assessments"),
-                        help="assessment.json の置き場所（圧縮の閾値をここから読みます）")
+                        help="where the assessment.json files are (the compression threshold is read from them)")
     args = parser.parse_args()
 
     if len(args.pairs) % 2:
-        raise SystemExit("audio と recipe を対で渡してください")
+        raise SystemExit("pass audio and recipe in pairs")
 
     for audio, recipe_path in zip(args.pairs[::2], args.pairs[1::2]):
         rec = recipe_mod.load(recipe_path)
