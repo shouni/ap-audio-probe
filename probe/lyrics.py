@@ -1,15 +1,15 @@
-"""歌詞の行が実際に歌われたかを ASR で確かめる。
+"""Check with ASR whether each lyric line was actually sung.
 
-Lyria は歌詞量と尺が噛み合わないと行を落とします。書き起こして歌詞と突き合わせれば、
-どの行が消えたのかまで分かります。落とし方はモデルで変わり、lyria-3.5 では 1 つのフックを
-2 回歌って別の行を落とす形も出ます（実測: 09-04 生成の Chorus 1）。
+Lyria drops lines when the amount of lyrics and the length do not fit. Transcribing and comparing with the
+lyrics shows which lines vanished. How lines are dropped depends on the model: lyria-3.5 can also sing one
+hook twice and drop another line (seen on Chorus 1 of a song generated on 09-04).
 
-生成側にも歌詞の照合はありますが、あちらが比べるのは**モデルが返した譜面の行数**で、
-鳴った音は見ていません（生成側の `domain/lyric_fidelity.go` に明記があります）。
-譜面どおりに歌えなかった失敗を捕まえられるのは、実際の音を書き起こすこちらだけです。
+The generator also compares lyrics, but it compares **the number of lines in the score the model returned**,
+not the audio (stated in the generator's `domain/lyric_fidelity.go`). Only transcribing the actual audio
+catches lines that were not sung as scored.
 
-期待値は低めに見てください。大音量の伴奏を伴う日本語歌唱の認識精度は出ないため、
-これは校正ツールではなく「行が生き残ったか」の粗い検査です。
+Keep expectations low. Recognition of Japanese singing over loud backing is not accurate, so this is a rough
+"did the line survive" check, not a calibration tool.
 """
 
 from __future__ import annotations
@@ -27,32 +27,31 @@ from .vocals import FRAME_FLOOR_DB, FRAME_SECONDS, frame_levels, sung_reference
 
 MODEL = "large-v3"
 
-# whisper が内部で使うサンプリングレート。切り出しの単位もこれに揃えます。
+# The sample rate whisper uses internally; clips are cut at this rate too.
 SAMPLE_RATE = 16000
 
-# 声の前後に残す余白。子音の立ち上がりや語尾の余韻を切り落とさない程度に取ります。
+# Padding kept around the voice, enough not to cut consonant onsets or trailing endings.
 CLIP_PAD_SECONDS = 0.2
 
-# これを超える無音を、whisper に幻聴の兆候として扱わせます(transcribe を参照)。
+# Silence longer than this is treated by whisper as a sign of hallucination (see transcribe).
 HALLUCINATION_SILENCE_SECONDS = 2.0
 
-# 期待した行の読みが、書き起こしの中にこの割合以上見つかれば「歌われた」と見なす
-# (数え方は _coverage を参照)。認識が荒れるため、厳しくすると全行が落ちたことになります。
+# A line counts as sung when at least this share of its reading is found in the transcript (counted as in
+# _coverage). Recognition is noisy, so a stricter value would report every line as dropped.
 COVERAGE_THRESHOLD = 0.45
 
 _kks = pykakasi.kakasi()
 
-# 日本語歌唱に混ざった英語は日本語 ASR が安定して聞き取れません。実測では
-# "Split the role" が一貫して "Speed the road" になりました。行は歌われている
-# のに不一致として上がるため、比較からは日本語部分だけを取り出します。
+# Japanese ASR does not reliably hear English mixed into Japanese singing: "Split the role" came out as
+# "Speed the road" every time. A sung line would be reported as a mismatch, so only the Japanese part is compared.
 _LATIN = re.compile(r"[A-Za-z0-9'’\-]+")
 
 
 def to_kana(text: str) -> str:
-    """比較のために読みへ正規化する。漢字と仮名の表記差で不一致になるのを防ぐ。
+    """Normalise to the reading (kana) for comparison, so kanji vs kana spelling does not cause a mismatch.
 
-    英数字は落とします。日本語 ASR が英語を正しく書き起こせないため、残すと
-    歌われている行まで不一致になります。
+    Latin letters and digits are dropped: Japanese ASR cannot transcribe English correctly, and keeping them
+    would make sung lines mismatch.
     """
     japanese_only = _LATIN.sub(" ", text)
     kana = "".join(part["kana"] for part in _kks.convert(japanese_only))
@@ -66,7 +65,7 @@ class LineCheck:
 
     @property
     def verifiable(self) -> bool:
-        """日本語を含まない行は、この方法では歌われたか確かめられない。"""
+        """A line without Japanese cannot be checked this way."""
         return bool(to_kana(self.line))
 
     @property
@@ -92,21 +91,21 @@ def trim_to_voice(
     start: int = 0,
     end: int | None = None,
 ) -> np.ndarray:
-    """audio[start:end] の、声が鳴っている範囲だけに詰める。
+    """Trim audio[start:end] to where the voice is.
 
-    狙いは、声が一度も floor を超えない区間で空を返すことです。そこは本当に歌われて
-    いないのに、渡せば whisper が幻聴を返します(実測では分離漏れだけの Outro が
-    「ありがとうございました。」になりました)。行が丸ごと落ちたセクションはまさに
-    この形なので、幻聴で埋まると検査そのものが意味を失います。
+    The point is to return nothing for a section whose voice never crosses the floor. Nothing was sung there,
+    yet whisper hallucinates when given it (an outro with only separation leakage came back as
+    「ありがとうございました。」). A section that lost all its lines looks exactly like this, so filling it with
+    hallucinations would defeat the check.
 
-    声があるかどうかは区間の中だけで判定し、前後の余白だけを区間の外へはみ出して
-    取ります。余白が区間の端で止まると、声が区間の頭ちょうどから鳴るセクションで
-    余白が 0 になり、whisper が区間を丸ごと幻聴で潰します(実測: 120 BPM の Verse
-    16-40s が「ご視聴ありがとうございました。」1文になり、6行すべてが落ちたと
-    報告されました。外へ 0.1 秒広げると全行が出ます)。判定まで外へ広げないのは、
-    丸ごと落ちたセクションが隣の歌尾を拾って「声あり」になるのを防ぐためです。
+    Whether there is voice is judged inside the section only; only the padding reaches outside it. If the
+    padding stopped at the section edge, a section whose voice starts right at its head would get zero padding
+    and whisper would flatten it into a hallucination (a 120 BPM Verse at 16-40 s became the single sentence
+    「ご視聴ありがとうございました。」 and all six lines were reported dropped; widening by 0.1 s brought every
+    line back). The judgement itself does not reach outside, so a section that lost everything does not count
+    as "voiced" by catching the neighbour's held ending.
 
-    声のある区間で端を詰めること自体は、幻聴を止めません(transcribe を参照)。
+    Trimming the edges of a voiced section does not, by itself, stop hallucinations (see transcribe).
     """
     end = len(audio) if end is None else end
     levels = frame_levels(audio[start:end], sample_rate)
@@ -127,26 +126,23 @@ def transcribe(
     device: str = "cpu",
     model_name: str = MODEL,
 ) -> list[tuple[Section, str]]:
-    """ボーカル stem をセクションごとに切って書き起こす。伴奏を除いてあるぶん認識率が上がる。
+    """Transcribe the vocal stem section by section. With the backing removed, recognition improves.
 
-    期待した歌詞を initial_prompt に渡してはいけません。認識率は上がりますが、
-    モデルが与えた歌詞へ引きずられ、落ちた行まで書き起こされてしまいます。
-    検証したい対象を答えとして渡すことになるためです。
+    Never pass the expected lyrics as initial_prompt. Recognition improves, but the model is pulled towards the
+    given lyrics and transcribes even the dropped lines: it would be handing over the answer to what is being checked.
 
-    stem 全体を一度に渡してはいけません。whisper は 30 秒窓で処理するため、
-    冒頭のインストが窓に丸ごと入ると無音とみなして幻聴を返します。実測では
-    「降ってこい」の 0-30s が「ご視聴ありがとうございました」1セグメントに潰れ、
-    歌われている Verse の6行が落ちたと報告されました。区間ごとに切れば同じ音源で
-    全行が出ます。ついでに書き起こしとセクションの対応が時刻の重なり判定でなく
-    切り出しそのもので決まるため、境界付近の取りこぼしもなくなります。
+    Never pass the whole stem at once. whisper works in 30-second windows, and an instrumental opening that
+    fills a window is taken as silence and hallucinated over. On 「降ってこい」, 0-30 s collapsed into one
+    segment 「ご視聴ありがとうございました」 and the six sung lines of the Verse were reported dropped. Cutting
+    per section brings every line back from the same audio. It also maps transcripts to sections by the cut
+    itself rather than by time overlap, so nothing is lost near boundaries.
 
-    区間ごとに切っても幻聴は残ります。最後の半端な窓が内部で無音に埋められるため、
-    そこで同じことが起きます(歌が 161s で終わる Chorus 2 の書き起こしが
-    「ご視聴ありがとうございました」で終わり、最終行が落ちたと報告されました)。
-    止まったのは `hallucination_silence_threshold` だけです。末尾の無音を詰める、
-    `vad_filter=True`、`no_speech_threshold` を下げるはいずれも効きませんでした。
-    このパラメータは `word_timestamps=True` のときだけ働くぶん遅くなりますが、
-    幻聴が混じったまま行落ちを判定するよりは確実です。
+    Hallucinations survive per-section cuts too: the last partial window is padded with silence internally,
+    and the same thing happens there (a Chorus 2 whose singing ends at 161 s ended its transcript with
+    「ご視聴ありがとうございました」 and its last line was reported dropped). Only
+    `hallucination_silence_threshold` stopped it. Trimming trailing silence, `vad_filter=True` and a lower
+    `no_speech_threshold` all failed. The parameter only works with `word_timestamps=True`, which is slower,
+    but that beats judging dropped lines with hallucinations mixed in.
     """
     from faster_whisper import WhisperModel
     from faster_whisper.audio import decode_audio
@@ -154,7 +150,7 @@ def transcribe(
     audio = decode_audio(str(vocals_wav), sampling_rate=SAMPLE_RATE)
     model = WhisperModel(model_name, device=device, compute_type="int8")
 
-    # 無音の判定は vocals.py と同じ物差し(歌唱区間からの相対)で行います。
+    # Silence is judged with the same yardstick as vocals.py (relative to the sung sections).
     floor = sung_reference(audio, SAMPLE_RATE, recipe) - FRAME_FLOOR_DB
 
     results = []
@@ -165,12 +161,12 @@ def transcribe(
         clip = trim_to_voice(
             audio, floor, start=int(section.start * SAMPLE_RATE), end=int(section.end * SAMPLE_RATE)
         )
-        if clip.size == 0:  # 音源がレシピの宣言尺より短い、または声が無い
+        if clip.size == 0:  # the audio is shorter than the recipe, or there is no voice
             results.append((section, ""))
             continue
 
-        # 長いセクションは内部で複数の窓に分かれます。前の窓の結果を引き継がせると、
-        # 一度荒れた認識がそのまま後ろへ伝播するため切ります。
+        # Long sections are split into several windows internally. Carrying the previous window's text over
+        # would propagate a bad recognition to everything after it, so it is turned off.
         segments, _ = model.transcribe(
             clip,
             language="ja",
@@ -184,11 +180,10 @@ def transcribe(
 
 
 def _coverage(line_kana: str, heard_kana: str) -> float:
-    """期待した行の読みが、書き起こしにどれだけ現れているか。
+    """How much of the expected line's reading appears in the transcript.
 
-    最長の連続一致ではなく一致ブロックの合計を使います。「境界をここに引け」が
-    「妖怪よ ここに行け」と聞き取られた場合、両端の小さな誤りで連続一致が分断され、
-    実際には歌われているのに 27% まで落ちてしまうためです。
+    It sums the matching blocks rather than taking the longest run: when 「境界をここに引け」 was heard as
+    「妖怪よ ここに行け」, small errors at both ends broke the run and a sung line fell to 27 %.
     """
     if not line_kana:
         return 1.0
@@ -198,7 +193,7 @@ def _coverage(line_kana: str, heard_kana: str) -> float:
 
 
 def check(transcripts: list[tuple[Section, str]], recipe: Recipe) -> list[SectionCheck]:
-    """セクションごとの書き起こしと、そこで歌われるはずの行を突き合わせる。"""
+    """Compare each section's transcript with the lines that should be sung there."""
     results = []
     for section, heard in transcripts:
         expected = recipe.lyrics.get(section.name, [])
@@ -222,22 +217,22 @@ def render(checks: list[SectionCheck]) -> str:
         lines.append(f"\n[{c.section.name}]  {c.section.start:.0f}-{c.section.end:.0f}s")
         for lc in c.lines:
             if not lc.verifiable:
-                lines.append(f"     ―――  {lc.line}  (英語のみ・判定対象外)")
+                lines.append(f"     ―――  {lc.line}  (English only, not checked)")
                 continue
             mark = "  " if lc.sung else "❓"
             lines.append(f"  {mark} {lc.coverage:>4.0%}  {lc.line}")
-        lines.append(f"     書き起こし: {c.transcript[:110] or '(なし)'}")
+        lines.append(f"     transcript: {c.transcript[:110] or '(none)'}")
 
     missing = [(c, lc) for c in checks for lc in c.missing]
     lines.append("\n" + "-" * 70)
     if missing:
-        lines.append(f"❓ 一致しなかった行が {len(missing)} 件あります:")
+        lines.append(f"❓ {len(missing)} line(s) did not match:")
         for c, lc in missing:
             lines.append(f"   [{c.section.name}] {lc.line}  ({lc.coverage:.0%})")
         lines.append(
-            "\n※ 認識精度の問題と実際の行落ちは、この指標だけでは区別できません。"
-            "\n  該当箇所を実際に聴いて確かめてください。"
+            "\n* This measure alone cannot tell recognition errors from lines that were really dropped."
+            "\n  Listen to those passages to confirm."
         )
     else:
-        lines.append("✓ すべての行が書き起こしの中に見つかりました。")
+        lines.append("✓ every line was found in the transcript.")
     return "\n".join(lines)

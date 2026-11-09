@@ -1,8 +1,8 @@
-"""Demucs でボーカル stem を分離する。
+"""Separate the vocal stem with Demucs.
 
-帯域エネルギーで歌とシンセを見分けようとすると、saw 系のパッドやコードが
-歌声と同じ帯域に倍音ごと乗るため誤検出が避けられない。伴奏を実際に取り除いて
-から測るほうが、判定が原理的に素直になる。
+Telling voice from synths by band energy cannot avoid false positives: saw pads and chords sit in the same
+band as the voice, harmonics and all. Actually removing the backing before measuring makes the verdict
+straightforward in principle.
 """
 
 from __future__ import annotations
@@ -15,11 +15,10 @@ MODEL = "htdemucs"
 
 
 def resolve_device(device: str | None) -> str:
-    """demucs の実行デバイスを決める。指定があればそれを、無ければ使えるものを選ぶ。
+    """Choose the device for demucs: the given one, or whatever is available.
 
-    既定を "mps" に決め打ちしていた頃は、Apple Silicon 以外で --device cpu を書き忘れると
-    demucs が起動直後に落ちていました。torch の読み込みは数秒かかるので、指定があるときは
-    触りません。
+    When "mps" was hard-coded as the default, forgetting --device cpu off Apple Silicon crashed demucs right
+    at start. Importing torch takes seconds, so it is not touched when a device is given.
     """
     if device:
         return device
@@ -33,14 +32,14 @@ def resolve_device(device: str | None) -> str:
 
 
 def separate_vocals(audio: Path, out_dir: Path, device: str | None = None) -> Path:
-    """audio からボーカル stem を作り、その wav のパスを返す。
+    """Create the vocal stem from `audio` and return the wav path.
 
-    既に分離済みなら再実行しない(MPS でも3分の曲に20秒程度かかるため)。
-    device を省くと resolve_device が選びます。
+    Does not run again if already separated (about 20 s for a 3-minute song even on MPS).
+    Without `device`, resolve_device picks one.
     """
-    # demucs は拡張子を落とした名前で出力するため、同じ基底名の mp3 と wav が
-    # 同じ場所に書き込んでしまいます。測る対象が入れ替わっても気づけないので、
-    # 拡張子まで含めた作業ディレクトリに分けます。
+    # demucs names its output without the extension, so an mp3 and a wav with the same base name would
+    # write to the same place, and a swapped measurement target would go unnoticed. Keep them apart with a
+    # work directory that includes the extension.
     work = out_dir / audio.suffix.lstrip(".")
     vocals = work / MODEL / audio.stem / "vocals.wav"
     if vocals.exists():
@@ -58,5 +57,5 @@ def separate_vocals(audio: Path, out_dir: Path, device: str | None = None) -> Pa
     subprocess.run(cmd, check=True)
 
     if not vocals.exists():
-        raise FileNotFoundError(f"demucs は完走したが stem が見つからない: {vocals}")
+        raise FileNotFoundError(f"demucs finished but the stem is missing: {vocals}")
     return vocals

@@ -1,7 +1,7 @@
-"""assessment.json との突き合わせの回帰テスト。
+"""Regression tests for comparing with assessment.json.
 
-要点は「生成側と同じ測り方をしているか」の 1 点です。ここがずれると、mp3 と wav の差を
-見るための計測が、測り方の差を見る計測になります。
+The one point is "does it measure the same way as the generator". If that drifts, a measurement meant to show
+mp3 vs wav differences ends up showing differences in method.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _sine(freq: float, amplitude: float, seconds: float = 5.0) -> np.ndarray:
 
 
 def _record(**measurements) -> dict:
-    """生成側 AudioAssessmentRecord と同じ形の JSON。"""
+    """JSON shaped like the generator's AudioAssessmentRecord."""
     base = {
         "duration_seconds": 180.0,
         "leading_silence_seconds": 0.1,
@@ -75,17 +75,16 @@ def _record(**measurements) -> dict:
 
 
 def test_peak_follows_the_channel_average(tmp_path):
-    """生成側は全チャンネルを畳んでから振幅ピークを取る（inspector.go: meanSample）。
+    """The generator folds all channels before taking the amplitude peak (inspector.go: meanSample).
 
-    左右を逆相にすると平均は 0 になります。チャンネルごとに測っていればピークは 0.9 で、
-    畳んでいれば 0 です。`peak_amplitude` が wav とも mp3 とも一致しなかった理由が
-    これなので、同じ畳み方をしていることをここで固定します。
+    With left and right in opposite phase the average is 0: measured per channel the peak is 0.9, folded it is 0.
+    This is why `peak_amplitude` matched neither the wav nor the mp3, so the folding is pinned here.
     """
     tone = _sine(1000.0, 0.9)
 
     measured = measure(_write(tmp_path / "t.wav", tone, -tone))
 
-    # 完全な 0 にはなりません。wav へ書いた時点の量子化が残ります(1.5e-5 ≒ 1/65536)。
+    # Not exactly 0: quantisation from writing the wav remains (1.5e-5 ≈ 1/65536).
     assert measured.peak_amplitude == pytest.approx(0.0, abs=1e-3)
 
 
@@ -93,7 +92,7 @@ def test_peak_and_rms_match_a_known_signal(tmp_path):
     measured = measure(_write(tmp_path / "t.wav", _sine(1000.0, 0.5)))
 
     assert measured.peak_amplitude == pytest.approx(0.5, abs=0.01)
-    # 振幅 0.5 の正弦波の RMS は 0.354 = -9.0dBFS。
+    # a sine of amplitude 0.5 has an RMS of 0.354 = -9.0dBFS
     assert measured.rms_dbfs == pytest.approx(-9.0, abs=0.2)
     assert measured.duration_seconds == pytest.approx(5.0, abs=0.01)
 
@@ -110,11 +109,11 @@ def test_leading_and_trailing_silence_are_measured_from_the_edges(tmp_path):
 
 
 def test_treble_headroom_is_positive_for_a_dark_signal(tmp_path):
-    """主帯域だけが鳴っていれば、記録される headroom は大きく出る。
+    """With only the main band playing, the recorded headroom comes out large.
 
-    1kHz の純音でも 17dB 程度にしかなりません。2 次バンドパス 1 段は裾が緩く、
-    4-10kHz 側にも 1kHz が残るためです(inspector.go の但し書きどおり)。この値を
-    帯域の絶対量として読んではいけない、という確認も兼ねています。
+    Even a pure 1kHz tone only reaches about 17dB: a single second-order band-pass has gentle skirts and some
+    1kHz remains in the 4-10kHz band (as inspector.go notes). This also confirms the value must not be read as
+    an absolute band level.
     """
     measured = measure(_write(tmp_path / "t.wav", _sine(1000.0, 0.5)))
 
@@ -138,7 +137,7 @@ def test_load_reads_the_generated_record(tmp_path):
 
 
 def test_load_survives_a_record_without_review_or_lyrics(tmp_path):
-    """講評と譜面はどちらも欠けうる（生成側は失敗しても記録を書きます）。"""
+    """The review and the score can both be missing (the generator writes the record even when they fail)."""
     data = _record()
     del data["assessment"]["review"]
     del data["assessment"]["lyrics"]
@@ -148,8 +147,8 @@ def test_load_survives_a_record_without_review_or_lyrics(tmp_path):
     record = load(path)
 
     assert record.review is None and record.lyrics is None
-    # 欠けている項目は行ごと出しません（0/5 と書くと講評が付いたように読めます）。
-    assert "講評" not in render(record, record.measurements, "wav")
+    # Missing items are left out entirely (writing 0/5 would read as if there were a review).
+    assert "review" not in render(record, record.measurements, "wav")
 
 
 def _measured(**overrides) -> Measurements:
@@ -172,19 +171,19 @@ def _measured(**overrides) -> Measurements:
 
 
 def test_the_mp3_padding_is_not_reported_as_a_difference(tmp_path):
-    """生成側の尺は mp3 の padding のぶん長い。それを毎回「差」と呼んではいけない。"""
+    """The generator's length is longer by the mp3 padding; that must not be called a difference every time."""
     padding = MP3_PADDING_SAMPLES / SR
     path = tmp_path / "a.json"
     path.write_text(json.dumps(_record(duration_seconds=180.0 + padding)), encoding="utf-8")
 
-    duration = next(c for c in compare(load(path), _measured(duration_seconds=180.0)) if c.label == "尺")
+    duration = next(c for c in compare(load(path), _measured(duration_seconds=180.0)) if c.label == "length")
 
     assert duration.note
     assert not duration.unexplained
 
 
 def test_a_level_gap_beyond_the_encoding_difference_is_flagged(tmp_path):
-    """mp3 と wav の差は 0.1dB 台。それを超えるラウドネス差は説明が付かない。"""
+    """mp3 vs wav differ around 0.1dB; a loudness gap beyond that has no explanation."""
     path = tmp_path / "a.json"
     path.write_text(json.dumps(_record()), encoding="utf-8")
     record = load(path)
@@ -192,14 +191,14 @@ def test_a_level_gap_beyond_the_encoding_difference_is_flagged(tmp_path):
     flagged = [c for c in compare(record, _measured(integrated_lufs=-11.0)) if c.unexplained]
 
     assert [c.label for c in flagged] == ["integrated"]
-    assert "説明の付かない差" in render(record, _measured(integrated_lufs=-11.0), "wav")
+    assert "unexplained difference" in render(record, _measured(integrated_lufs=-11.0), "wav")
 
 
 def test_a_note_does_not_silence_a_large_gap(tmp_path):
-    """但し書きが付く項目でも、差が大きければ警告は出す。
+    """Items with a remark still warn when the difference is large.
 
-    peak_amplitude には「チャンネル平均で測った値」という注記が常に付きます。注記を
-    警告の抑止に使うと、測り方の説明が差そのものの免罪符になります。
+    peak_amplitude always carries the "measured on the channel average" remark. Using remarks to silence warnings
+    would let the description of the method excuse the difference itself.
     """
     path = tmp_path / "a.json"
     path.write_text(json.dumps(_record()), encoding="utf-8")

@@ -1,21 +1,20 @@
-"""生成側が残した assessment.json と、手元の音源を突き合わせる。
+"""Compare the assessment.json the generator left with the local audio.
 
-生成側はジョブごとに `music/<job_id>/assessment.json` を置きます。中身は
-生成時に測った実測値と、聴かせたモデルの講評です。ここではその記録と、
-同じ量を手元で測り直した値を並べます。
+The generator writes `music/<job_id>/assessment.json` per job: the values it measured at generation time and
+the review of the model that listened to it. This lays that record next to the same quantities measured again
+locally.
 
     python -m probe.assessment audio/foo.wav assessments/foo.json
 
-**測っている対象が違います。** 生成側が測るのは Web 配信用の mp3
-（`Inspect(mastered.Web)`。真正ピークと LUFS だけは、`loudness_from_master` が true なら
-`InspectMaster` で wav を測った値）で、こちらが測るのは配信用マスターの wav です。
-差はその 2 つの差であって、どちらかが間違っているわけではありません。
-説明が付く差（下の PADDING / peak_amplitude の注記）とそうでない差を分けるのが
-この計測の目的です。
+**They measure different things.** The generator measures the mp3 served on the web (`Inspect(mastered.Web)`;
+true peak and LUFS only come from the wav via `InspectMaster` when `loudness_from_master` is true), while this
+measures the distribution master wav. Differences are differences between those two, not errors on either
+side. The point is to separate the differences that have an explanation (the PADDING / peak_amplitude notes
+below) from those that do not.
 
-再実装した測り方は生成側の inspector.go に合わせてあります。同じ数字を
-別の道具で出すためで、実装が離れると差が「mp3 と wav の差」なのか
-「測り方の差」なのか分からなくなります。
+The measurement is reimplemented to match the generator's inspector.go, so the same numbers come out of a
+different tool. If the implementations drifted, it would be unclear whether a difference is "mp3 vs wav" or
+"a different method".
 """
 
 from __future__ import annotations
@@ -32,23 +31,23 @@ from scipy.signal import sosfilt
 from .loudness import measure as measure_loudness
 from .table import cell
 
-# 生成側 inspector.go の定数。名前も値もあちらに合わせています。
+# Constants from the generator's inspector.go, with the same names and values.
 ANALYSIS_WINDOW_SECONDS = 0.05
 SILENCE_THRESHOLD_RMS = 0.005
 CLIPPING_THRESHOLD = 0.999
 MIN_AUDIO_DBFS = -120.0
 
-# Inspector の帯域。マスタリングの圧縮帯域（spectrum.py: CROSSOVER_HZ）とは別物で、
-# 2026-09-05 に圧縮が 6kHz 始まりへ動いた後も、この記録は 4-10kHz のままです。
+# The Inspector's bands. Not the mastering's compressed band (spectrum.py: CROSSOVER_HZ); after compression
+# moved to start at 6kHz on 2026-09-05, this record stayed at 4-10kHz.
 MID_BAND_HZ = (200.0, 4000.0)
 HIGH_BAND_HZ = (4000.0, 10000.0)
 
-# mp3 デコーダが足す padding。2,304 サンプル = MP3 フレーム 2 つぶんで、
-# 生成側の尺はこのぶん長く出ます。44.1kHz で 0.052 秒。
+# Padding added by the mp3 decoder: 2,304 samples = two MP3 frames, so the generator reports a length longer
+# by this much. 0.052 s at 44.1kHz.
 MP3_PADDING_SAMPLES = 2304
 
-# 説明の付かない差として拾う幅。mp3 と wav の符号化差は実測で 0.1dB 台なので、
-# その一桁上に置いています。尺は padding を引いた残りで見ます。
+# Tolerances for flagging unexplained differences. Encoding differences between mp3 and wav measured around
+# 0.1dB, so these sit an order above. Length is judged after subtracting the padding.
 LEVEL_TOLERANCE_DB = 0.5
 DURATION_TOLERANCE_SECONDS = 0.2
 RATIO_TOLERANCE = 0.02
@@ -56,7 +55,7 @@ RATIO_TOLERANCE = 0.02
 
 @dataclass(frozen=True)
 class Measurements:
-    """inspector.go の AudioMeasurements と同じ項目。"""
+    """The same fields as inspector.go's AudioMeasurements."""
 
     duration_seconds: float
     leading_silence_seconds: float
@@ -78,28 +77,28 @@ class Measurements:
 
 @dataclass(frozen=True)
 class MasteringSettings:
-    """生成側がその曲に掛けたマスタリング定数（MasteringSettings）。
+    """The mastering constants the generator applied to the song (MasteringSettings).
 
-    2026-10-29 より前の記録には無く、そのときは Record.mastering が None です。
+    Records before 2026-10-29 lack them, and then Record.mastering is None.
     """
 
-    # 処理前の入力で測った 6-10kHz の平均。生成側が測れずに固定閾値へ退避した曲では None。
+    # 6-10kHz average measured on the unprocessed input; None when the generator could not measure it and fell back to a fixed threshold.
     treble_dbfs: float | None
     treble_threshold_dbfs: float
     loudness_gain_db: float
 
     @property
     def master_threshold_dbfs(self) -> float:
-        """master.wav の上で見た閾値。
+        """The threshold as seen on master.wav.
 
-        コンプレッサは音量合わせより前で効くので、処理後の音で線を引くにはゲインを足します。
+        The compressor acts before loudness matching, so drawing the line on the processed audio needs the gain added.
         """
         return self.treble_threshold_dbfs + self.loudness_gain_db
 
 
 @dataclass(frozen=True)
 class Record:
-    """assessment.json（生成側の AudioAssessmentRecord）から使う部分。"""
+    """The parts of assessment.json (the generator's AudioAssessmentRecord) used here."""
 
     job_id: str
     created_at: str
@@ -115,12 +114,11 @@ class Record:
 
 
 def _bandpass_sos(sample_rate: int, low_hz: float, high_hz: float) -> np.ndarray:
-    """inspector.go の newBandFilter と同じ 2 次バンドパス（RBJ Cookbook）。
+    """The same second-order band-pass as inspector.go's newBandFilter (RBJ Cookbook).
 
-    spectrum.py の 4 次バターワースではなくこちらを使うのは、生成側が記録した
-    mid/high band と同じ数字を出すためです。1 段のバンドパスは裾が緩く、主帯域には
-    キックやベースがかなり混ざります（inspector.go のコメントに但し書きがあります）。
-    帯域の絶対量としてではなく、記録との突き合わせにだけ使ってください。
+    This is used instead of spectrum.py's fourth-order Butterworth to reproduce the mid/high band numbers the
+    generator recorded. A single-stage band-pass has gentle skirts, and plenty of kick and bass leaks into the
+    main band (inspector.go notes this). Use it only to compare with the record, not as an absolute band level.
     """
     center = np.sqrt(low_hz * high_hz)
     q = center / (high_hz - low_hz)
@@ -135,10 +133,10 @@ def _dbfs(amplitude: float) -> float:
 
 
 def _silence(windows: np.ndarray) -> tuple[float, float, float, float]:
-    """無音窓の並びから、先頭・末尾・曲中最長・全体の割合を出す。
+    """From the sequence of silent windows, return leading, trailing, longest internal, and the overall share.
 
-    数え方は inspector.go の summariseSilence に合わせています（曲中最長は先頭と末尾を
-    除いた内側だけを見る、割合は先頭・末尾も含めた全窓に対する比）。
+    Counted as in inspector.go's summariseSilence (the longest internal run looks only inside, excluding the
+    leading and trailing runs; the share is over all windows, including those).
     """
     if windows.size == 0:
         return 0.0, 0.0, 0.0, 0.0
@@ -171,13 +169,13 @@ def _silence(windows: np.ndarray) -> tuple[float, float, float, float]:
 
 
 def measure(path: Path) -> Measurements:
-    """生成側 Inspector と同じ方法で音源を測る。
+    """Measure the audio the same way as the generator's Inspector.
 
-    チャンネルを平均した 1 波形で測るのが要点です。生成側は decodeFrame → meanSample で
-    全チャンネルを畳んでから振幅ピークを取るため、`peak_amplitude` はステレオ差のぶん
-    必ず各チャンネルのピークより低く出ます（実測: 同じ mp3 で ch 別 0.903 / ch 平均 0.867）。
-    別々のものを比べないよう、こちらも同じ畳み方をします。真正ピークとラウドネスだけは
-    規格がチャンネルごとに定義されているため、loudness.py（ffmpeg）の値を使います。
+    The key is measuring one waveform with the channels averaged. The generator folds all channels with
+    decodeFrame → meanSample before taking the amplitude peak, so `peak_amplitude` always comes out lower than
+    each channel's peak by the stereo difference (same mp3: 0.903 per channel / 0.867 averaged). This folds the
+    same way so like is compared with like. True peak and loudness are defined per channel by their standards,
+    so those use loudness.py (ffmpeg).
     """
     data, sample_rate = sf.read(path, dtype="float64", always_2d=True)
     mono = data.mean(axis=1)
@@ -185,7 +183,7 @@ def measure(path: Path) -> Measurements:
     window = max(int(sample_rate * ANALYSIS_WINDOW_SECONDS), 1)
     full = mono[: mono.size // window * window].reshape(-1, window)
     window_rms = np.sqrt(np.mean(np.square(full), axis=1)) if full.size else np.empty(0)
-    # 端数の窓も無音判定へ含める（末尾のフェードアウトが丸ごと落ちるのを防ぐ）。
+    # include the partial last window in the silence check (so a trailing fade-out is not dropped)
     remainder = mono[full.size :]
     if remainder.size:
         window_rms = np.append(window_rms, np.sqrt(np.mean(np.square(remainder))))
@@ -264,13 +262,12 @@ class Comparison:
     recorded: float
     measured: float
     unit: str
-    # note は行に添える但し書きです。読む人向けで、判定は動かしません。
+    # note is a remark shown on the row, for the reader; it does not change the verdict.
     note: str = ""
     tolerance: float = 0.0
-    # explained は「この差はもう説明が付いている」ことを表します。note と分けているのは、
-    # 但し書きが常に出る項目（peak_amplitude の測り方など）で、差の大きさまで見逃さない
-    # ようにするためです。説明を付けた時点で警告を止めると、測り方の注記が差の免罪符に
-    # なります。
+    # explained means "this difference is already accounted for". It is kept apart from note so that items whose
+    # remark always shows (how peak_amplitude is measured, for example) still flag a large difference. Silencing
+    # the warning whenever a remark exists would let a method note excuse any difference.
     explained: bool = False
 
     @property
@@ -283,7 +280,7 @@ class Comparison:
 
 
 def compare(record: Record, measured: Measurements, sample_rate: int = 44100) -> list[Comparison]:
-    """記録と再測を項目ごとに並べる。差の説明が付くものには但し書きを添える。"""
+    """Line up the record and the remeasurement per item, with a remark where the difference has an explanation."""
     r, m = record.measurements, measured
     padding = MP3_PADDING_SAMPLES / sample_rate
 
@@ -291,15 +288,15 @@ def compare(record: Record, measured: Measurements, sample_rate: int = 44100) ->
 
     return [
         Comparison(
-            "尺", r.duration_seconds, m.duration_seconds, "s",
-            f"mp3 の padding {padding * 1000:.0f}ms で説明が付く" if padded else "",
+            "length", r.duration_seconds, m.duration_seconds, "s",
+            f"explained by the mp3 padding of {padding * 1000:.0f}ms" if padded else "",
             DURATION_TOLERANCE_SECONDS, explained=padded,
         ),
-        # 許容幅は mp3 の符号化によるオーバーシュートぶんです（実測: ch 平均で wav 0.887 /
-        # mp3 0.867 の 0.02）。倍を取って、それを超える差は測り方を疑う側へ倒します。
+        # The tolerance covers the overshoot from mp3 encoding (channel-averaged: wav 0.887 / mp3 0.867, a 0.02
+        # gap). Doubled; anything beyond it points at the method.
         Comparison(
             "peak_amplitude", r.peak_amplitude, m.peak_amplitude, "",
-            "どちらもチャンネル平均の波形で測った値", 0.05,
+            "both measured on the channel-averaged waveform", 0.05,
         ),
         Comparison("true peak", r.true_peak_dbtp, m.true_peak_dbtp, "dBTP", "", LEVEL_TOLERANCE_DB),
         Comparison("integrated", r.integrated_lufs, m.integrated_lufs, "LUFS", "", LEVEL_TOLERANCE_DB),
@@ -309,23 +306,23 @@ def compare(record: Record, measured: Measurements, sample_rate: int = 44100) ->
         Comparison(
             "treble headroom", r.treble_headroom_db, m.treble_headroom_db, "dB", "", LEVEL_TOLERANCE_DB
         ),
-        Comparison("曲頭の無音", r.leading_silence_seconds, m.leading_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
-        Comparison("曲尾の無音", r.trailing_silence_seconds, m.trailing_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
-        Comparison("曲中最長の無音", r.longest_internal_silence_seconds, m.longest_internal_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
-        Comparison("無音の割合", r.silent_ratio, m.silent_ratio, "", "", RATIO_TOLERANCE),
-        Comparison("クリップ率", r.clipped_sample_ratio, m.clipped_sample_ratio, "", "", RATIO_TOLERANCE),
+        Comparison("leading silence", r.leading_silence_seconds, m.leading_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("trailing silence", r.trailing_silence_seconds, m.trailing_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("longest inner silence", r.longest_internal_silence_seconds, m.longest_internal_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("silent share", r.silent_ratio, m.silent_ratio, "", "", RATIO_TOLERANCE),
+        Comparison("clipped share", r.clipped_sample_ratio, m.clipped_sample_ratio, "", "", RATIO_TOLERANCE),
     ]
 
 
 def render(record: Record, measured: Measurements, audio_name: str) -> str:
     lines = [
-        f"\n{record.job_id or '(job_id なし)'}  記録 {record.created_at}",
-        f"総合点 {record.score:.2f} / 実測の合否 {'合格' if record.passed else '不合格'}"
-        f" / マスタリング {'適用' if record.mastered else '未適用'}",
-        f"要約: {record.summary}",
+        f"\n{record.job_id or '(no job_id)'}  recorded {record.created_at}",
+        f"score {record.score:.2f} / measured {'pass' if record.passed else 'fail'}"
+        f" / mastering {'applied' if record.mastered else 'not applied'}",
+        f"summary: {record.summary}",
         "",
-        cell("項目", 18) + cell("生成側", 14, right=True)
-        + cell(f"手元({audio_name})", 16, right=True) + cell("差", 10, right=True),
+        cell("item", 18) + cell("generator", 14, right=True)
+        + cell(f"local({audio_name})", 16, right=True) + cell("diff", 10, right=True),
         "-" * 76,
     ]
 
@@ -343,48 +340,48 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
     lines.append("-" * 76)
     if record.mastering:
         mst = record.mastering
-        source = "固定値へ退避" if mst.treble_dbfs is None else f"入力の 6-10kHz {mst.treble_dbfs:.1f}dBFS から"
+        source = "fell back to the fixed value" if mst.treble_dbfs is None else f"from the input 6-10kHz {mst.treble_dbfs:.1f}dBFS"
         lines.append(
-            f"マスタリング定数: 6-10kHz 閾値 {mst.treble_threshold_dbfs:.1f}dBFS ({source})"
-            f" / 音量合わせ {mst.loudness_gain_db:+.2f}dB"
+            f"mastering: 6-10kHz threshold {mst.treble_threshold_dbfs:.1f}dBFS ({source})"
+            f" / loudness gain {mst.loudness_gain_db:+.2f}dB"
         )
     if record.issues:
-        lines.append("生成側が挙げた指摘:")
+        lines.append("issues raised by the generator:")
         lines.extend(f"  [{kind}] {detail}" for kind, detail in record.issues)
 
     if record.review:
         r = record.review
         lines.append(
-            f"講評: 歌詞 {r.get('lyrics_intelligibility', 0)}/5 / 構成 {r.get('structure_match', 0)}/5"
-            f" / 進行 {r.get('pacing', 0)}/5 / ボーカル {r.get('vocal_balance', 0)}/5"
+            f"review: lyrics {r.get('lyrics_intelligibility', 0)}/5 / structure {r.get('structure_match', 0)}/5"
+            f" / pacing {r.get('pacing', 0)}/5 / vocal {r.get('vocal_balance', 0)}/5"
         )
         lines.extend(f"  - {f}" for f in (r.get("findings") or []))
 
     lyrics = record.lyrics
     if lyrics and (lyrics.get("missing_lines") or lyrics.get("extra_lines")):
         lines.append(
-            f"譜面の行数: 不足 {lyrics.get('missing_lines', 0)} / 余剰 {lyrics.get('extra_lines', 0)}"
-            "  ※ モデルが返した譜面の比較で、鳴った音は見ていません(check_lyrics.py の担当)"
+            f"score lines: missing {lyrics.get('missing_lines', 0)} / extra {lyrics.get('extra_lines', 0)}"
+            "  * compares the score the model returned, not the audio (that is check_lyrics.py\'s job)"
         )
 
     lines.append("")
     if unexplained:
-        lines.append(f"⚠ 説明の付かない差が {len(unexplained)} 件あります:")
+        lines.append(f"⚠ {len(unexplained)} unexplained difference(s):")
         lines.extend(f"   {c.label} {c.diff:+.3f}{c.unit}" for c in unexplained)
-        lines.append("  mp3 と wav の差は実測で 0.1dB 台です。それを超える差は測り方か対象を疑ってください。")
+        lines.append("  mp3 vs wav differences measure around 0.1dB. Beyond that, suspect the method or the target.")
     else:
-        lines.append("✓ 記録と手元の測定は、mp3 と wav の差で説明が付く範囲に収まっています。")
+        lines.append("✓ the record and the local measurement agree within what mp3 vs wav explains.")
     return "\n".join(lines)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("audio", type=Path, help="測る音源(master.wav 推奨)")
-    parser.add_argument("assessment", type=Path, help="生成側の assessment.json")
+    parser.add_argument("audio", type=Path, help="audio to measure (master.wav recommended)")
+    parser.add_argument("assessment", type=Path, help="the generator's assessment.json")
     args = parser.parse_args()
 
     record = load(args.assessment)
-    print(render(record, measure(args.audio), args.audio.suffix.lstrip(".") or "手元"))
+    print(render(record, measure(args.audio), args.audio.suffix.lstrip(".") or "local"))
 
 
 if __name__ == "__main__":

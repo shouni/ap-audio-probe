@@ -1,9 +1,9 @@
-"""検出力を確かめるための陽性対照を合成する。
+"""Synthesise positive controls to check detection power.
 
-クリーンな曲を1本測って「違反なし」と出ても、それは検出できることの証明には
-なりません。何を渡しても「クリーン」を返す実装でも同じ結果になるためです。
-そこで、インスト区間に歌声を意図的に混ぜた音源を作り、それを検出できるかで
-検出力を確かめます。混ぜる量を変えれば、判定が反転する境目も測れます。
+Measuring one clean song and getting "no violations" does not prove anything can be detected: an
+implementation that returns "clean" for anything would give the same result. So it builds audio with
+voice deliberately mixed into an instrumental section and checks that it is detected. Varying the amount
+also finds where the verdict flips.
 """
 
 from __future__ import annotations
@@ -24,31 +24,31 @@ def inject_vocal(
     gain_db: float,
     out_path: Path,
 ) -> Path:
-    """target 区間に、source_start から取った歌声を gain_db で混ぜた音源を書く。
+    """Write audio with voice taken from source_start mixed into the `target` section at gain_db.
 
-    gain_db は元の歌声に対する相対量です。0dB ならサビと同じ音量で混ざります。
+    gain_db is relative to the original voice: at 0dB it mixes in as loud as the chorus.
     """
     mix, sr = sf.read(mix_path, dtype="float32", always_2d=True)
     vocals, vsr = sf.read(vocals_path, dtype="float32", always_2d=True)
     if sr != vsr:
-        raise ValueError(f"サンプルレートが違う: mix={sr} vocals={vsr}")
+        raise ValueError(f"sample rates differ: mix={sr} vocals={vsr}")
 
     start = int(target.start * sr)
     end = min(int(target.end * sr), len(mix))
     length = end - start
     if length <= 0:
-        raise ValueError(f"区間が音源の外にある: {target.name}")
+        raise ValueError(f"section lies outside the audio: {target.name}")
 
     src = int(source_start * sr)
     snippet = vocals[src : src + length]
     if len(snippet) < length:
-        raise ValueError("元にする歌声が足りない: source_start を前にずらすこと")
+        raise ValueError("not enough source voice: move source_start earlier")
 
     out = mix.copy()
     out[start:end] += snippet * (10.0 ** (gain_db / 20.0))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # float32 で書くのは、混ぜた結果が 0dBFS を超えてもクリップさせないためです。
-    # ここでクリップすると、測っているのが混入なのか歪みなのか分からなくなります。
+    # Written as float32 so the mix does not clip above 0dBFS. Clipping here would leave it unclear whether
+    # the measurement shows the injected voice or distortion.
     sf.write(out_path, out, sr, subtype="FLOAT")
     return out_path

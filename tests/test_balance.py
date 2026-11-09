@@ -1,6 +1,6 @@
-"""声と伴奏の音量差（probe.balance）の回帰テスト。
+"""Regression tests for the voice vs backing level (probe.balance).
 
-demucs は通さず、合成した 2 本の stem を直接渡して計算部分だけを確かめます。
+No demucs: two synthesised stems are passed directly to check only the calculation.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _write(path, levels: dict[str, float], freq: float, seconds: float = 20.0, g
         lo, hi = int(s.start * SR), int(min(s.end, seconds) * SR)
         env[lo:hi] = levels[s.name]
     if gaps:
-        # 1 秒ごとに 0.5 秒黙る。行間の無音を模したもの。
+        # silent for 0.5 s every second, imitating the gaps between lines
         env[(t % 1.0) >= 0.5] = 0.0
     sf.write(path, tone * env, SR)
     return path
@@ -55,18 +55,18 @@ def _by_name(balances):
 def test_reports_backing_louder_in_the_chorus(stems):
     vocals, backing = stems
     _write(vocals, {"Intro": 0.0, "Verse": 0.1, "Chorus": 0.1}, 440.0)
-    # Chorus の伴奏を声の 2 倍（+6dB）にする。Verse は同じ大きさ。
+    # the Chorus backing is twice the voice (+6dB); the Verse is equal
     _write(backing, {"Intro": 0.1, "Verse": 0.1, "Chorus": 0.2}, 110.0)
 
     got = _by_name(analyse_balance(vocals, backing, _recipe()))
 
-    assert "Intro" not in got, "器楽区間は測らない"
+    assert "Intro" not in got, "instrumental sections are not measured"
     assert got["Verse"] == pytest.approx(0.0, abs=0.2)
     assert got["Chorus"] == pytest.approx(-6.0, abs=0.2)
 
 
 def test_ignores_frames_where_nobody_sings(stems):
-    """行間の無音を含めると、声の大きさと無関係に差がマイナスへ引っ張られる。"""
+    """Including the silent gaps between lines would pull the difference negative regardless of the voice."""
     vocals, backing = stems
     _write(vocals, {"Intro": 0.0, "Verse": 0.1, "Chorus": 0.1}, 440.0, gaps=True)
     _write(backing, {"Intro": 0.1, "Verse": 0.1, "Chorus": 0.1}, 110.0)

@@ -1,6 +1,6 @@
-"""端末に表を出すときの桁揃え。
+"""Column alignment for tables printed to the terminal.
 
-書式指定子の幅は文字数で数えるため、日本語の見出しを混ぜると列がずれます。
+Format-spec widths count characters, so columns shift when a heading contains wide (e.g. Japanese) characters.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import unicodedata
 
 
 def display_width(text: str) -> int:
-    """端末での表示幅。全角は 2 桁を占めます。"""
+    """Display width in the terminal. Full-width characters take two columns."""
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
 
 
