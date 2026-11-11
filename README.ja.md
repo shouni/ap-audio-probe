@@ -1,9 +1,11 @@
 # ✨ AP Audio Probe
 
-[![Language](https://img.shields.io/badge/Language-Python-blue)](https://www.python.org/)
-[![Python Version](https://img.shields.io/badge/Python-3.14-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/shouni/ap-audio-probe/actions/workflows/ci.yml/badge.svg)](https://github.com/shouni/ap-audio-probe/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen)](#)
+[![Language](https://img.shields.io/badge/Language-Python-blue)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/Python-3.13%2B-blue)](https://www.python.org/)
+[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/shouni/ap-audio-probe)](https://github.com/shouni/ap-audio-probe/tags)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 [English](README.md) | 日本語
 

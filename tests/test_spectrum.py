@@ -155,7 +155,9 @@ def test_gain_reduction_undoes_the_ratio():
 
 
 def test_gain_reduction_separates_a_spike_from_a_sustained_overshoot():
-    """Same time over the threshold, but brief peaks and sustained excess differ in reduction. The 2026-10-28 verses looked like this."""
+    """Same time over the threshold, but brief peaks and sustained excess differ in reduction.
+
+    The 2026-10-28 verses looked like this."""
     spike = np.array([-40.0] * 9 + [-29.0])
     sustained = np.array([-40.0] * 9 + [-25.0])
 

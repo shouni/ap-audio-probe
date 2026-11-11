@@ -114,7 +114,8 @@ class BandLevels:
     over_ratio: float | None
     # gain_reduction is the section average of the 6-10kHz reduction (dB). None when the threshold is unknown.
     gain_reduction: float | None
-    # low_punch is the gap between the high percentile and the median of the 40-120Hz short-term level (dB); see LOW_PUNCH_PERCENTILES.
+    # low_punch is the gap between the high percentile and the median of the 40-120Hz short-term level (dB);
+    # see LOW_PUNCH_PERCENTILES.
     low_punch: float
 
 
@@ -269,7 +270,7 @@ def main() -> None:
     if len(args.pairs) % 2:
         raise SystemExit("pass audio and recipe in pairs")
 
-    for audio, recipe_path in zip(args.pairs[::2], args.pairs[1::2]):
+    for audio, recipe_path in zip(args.pairs[::2], args.pairs[1::2], strict=False):
         rec = recipe_mod.load(recipe_path)
         threshold = recorded_threshold(audio, args.assessments)
         print(render(f"{rec.title}  ({audio.stem})", analyse(audio, rec, threshold), threshold))

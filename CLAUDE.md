@@ -23,7 +23,7 @@ An agreement so the same thing is not written three times. It started when the 2
 
 ## Commands
 
-The venv is Python 3.14 (the in-project `.venv` created by PyCharm). numba and ctranslate2 both ship 3.14 wheels, so there is no need for an older Python.
+The venv is Python 3.14 (the in-project `.venv` created by PyCharm); requirements.txt needs 3.13+ (audioop-lts). numba and ctranslate2 both ship 3.14 wheels, so there is no need for an older Python.
 
 ```bash
 .venv/bin/pip install -r requirements.txt
@@ -37,6 +37,7 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 
 ```bash
 .venv/bin/pytest                                                     # regression tests (seconds)
+.venv/bin/ruff check .                                               # lint (settings in pyproject.toml; pip install -r requirements-dev.txt)
 .venv/bin/pytest tests/test_vocals.py::test_clean_track_reports_no_violation
 .venv/bin/python scripts/calibrate.py    audio/x.wav recipes/x.json  # real positive control (minutes)
 .venv/bin/python scripts/check_lyrics.py audio/x.wav recipes/x.json  # dropped-line check (minutes)
@@ -48,6 +49,8 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 ```
 
 The four objects in a job directory are listed in a table in the README.
+
+CI (`.github/workflows/ci.yml`) runs the tests on Python 3.13 and 3.14 with only numpy / soundfile / scipy / pykakasi / pytest plus the ffmpeg binary (the assessment tests decode with it), and ruff. Keep demucs, torch and faster-whisper imported inside the functions that need them, or CI has to install them just to import a module.
 
 `audio/` `recipes/` `assessments/` `out/` and `*.mp3` `*.wav` are in `.gitignore`. Do not commit material; fetch it from GCS each time.
 

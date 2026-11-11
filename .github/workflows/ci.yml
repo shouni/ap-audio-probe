@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the oldest requirements.txt installs on (audioop-lts); 3.14 is the one used day to day.
+        python: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      # Only what the tests import. Demucs/torch and faster-whisper are loaded lazily by the
+      # commands that separate or transcribe, so the tests run without them.
+      - name: Install
+        run: python -m pip install numpy==2.4.6 soundfile==0.14.0 scipy==1.18.0 pykakasi==2.3.0 pytest==9.1.1
+      # The assessment tests decode audio with the ffmpeg binary, as the commands do.
+      # Retried with timeouts: the runner's package mirror can stall (same approach as shouni/workflows go-ci).
+      - name: Install ffmpeg
+        timeout-minutes: 10
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 60 sudo apt-get update \
+              && timeout 120 sudo apt-get install -y --no-install-recommends ffmpeg; then
+              exit 0
+            fi
+            echo "::warning::apt failed or stalled (attempt ${attempt}/3); retrying" >&2
+            sleep 10
+          done
+          echo "::error::could not install ffmpeg" >&2
+          exit 1
+      - name: Test
+        run: python -m pytest -q
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install ruff
+        run: python -m pip install ruff==0.17.4
+      - name: Ruff
+        run: ruff check .

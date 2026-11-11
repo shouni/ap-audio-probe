@@ -1,0 +1,3 @@
+# development (tests and lint)
+-r requirements.txt
+ruff==0.17.4
