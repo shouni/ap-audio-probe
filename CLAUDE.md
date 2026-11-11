@@ -50,7 +50,7 @@ gsutil cp gs://<bucket>/music/<job_id>/recipe.json recipes/<name>.json
 
 The four objects in a job directory are listed in a table in the README.
 
-CI (`.github/workflows/ci.yml`) runs the tests on Python 3.13 and 3.14 with only numpy / soundfile / scipy / pykakasi / pytest, and ruff. Keep demucs, torch and faster-whisper imported inside the functions that need them, or CI has to install them just to import a module.
+CI (`.github/workflows/ci.yml`) runs the tests on Python 3.13 and 3.14 with only numpy / soundfile / scipy / pykakasi / pytest plus the ffmpeg binary (the assessment tests decode with it), and ruff. Keep demucs, torch and faster-whisper imported inside the functions that need them, or CI has to install them just to import a module.
 
 `audio/` `recipes/` `assessments/` `out/` and `*.mp3` `*.wav` are in `.gitignore`. Do not commit material; fetch it from GCS each time.
 
