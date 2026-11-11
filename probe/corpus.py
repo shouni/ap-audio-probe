@@ -130,8 +130,9 @@ def render(tracks: list[TrackSummary]) -> str:
         group = [t for t in tracks if t.mode == mode]
         for t in group:
             lines.append(_row(t.name, _values(*_cells(t))))
-        columns = zip(*(_cells(t) for t in group))
-        lines.append(_row(f"  ↳ {mode} median ({len(group)} song{'' if len(group) == 1 else 's'})", _values(*(_median(list(c)) for c in columns))))
+        columns = zip(*(_cells(t) for t in group), strict=False)
+        label = f"  ↳ {mode} median ({len(group)} song{'' if len(group) == 1 else 's'})"
+        lines.append(_row(label, _values(*(_median(list(c)) for c in columns))))
         lines.append(rule)
 
     lines += [
@@ -149,7 +150,8 @@ def main() -> None:
     parser.add_argument("--recipes", type=Path, default=Path("recipes"), help="where the recipe.json files are")
     parser.add_argument("--assessments", type=Path, default=Path("assessments"),
                         help="where the assessment.json files are (the compression threshold is read from them)")
-    parser.add_argument("--balance", action="store_true", help="also show the chorus voice − backing (separates with demucs)")
+    parser.add_argument("--balance", action="store_true",
+                        help="also show the chorus voice − backing (separates with demucs)")
     parser.add_argument("--out", type=Path, default=Path("out"), help="where to write the stems")
     parser.add_argument("--device", help="device for demucs (default: picks mps / cuda / cpu)")
     args = parser.parse_args()

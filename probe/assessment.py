@@ -82,7 +82,8 @@ class MasteringSettings:
     Records before 2026-10-29 lack them, and then Record.mastering is None.
     """
 
-    # 6-10kHz average measured on the unprocessed input; None when the generator could not measure it and fell back to a fixed threshold.
+    # 6-10kHz average measured on the unprocessed input; None when the generator could not measure it
+    # and fell back to a fixed threshold.
     treble_dbfs: float | None
     treble_threshold_dbfs: float
     loudness_gain_db: float
@@ -306,9 +307,12 @@ def compare(record: Record, measured: Measurements, sample_rate: int = 44100) ->
         Comparison(
             "treble headroom", r.treble_headroom_db, m.treble_headroom_db, "dB", "", LEVEL_TOLERANCE_DB
         ),
-        Comparison("leading silence", r.leading_silence_seconds, m.leading_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
-        Comparison("trailing silence", r.trailing_silence_seconds, m.trailing_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
-        Comparison("longest inner silence", r.longest_internal_silence_seconds, m.longest_internal_silence_seconds, "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("leading silence", r.leading_silence_seconds, m.leading_silence_seconds,
+                   "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("trailing silence", r.trailing_silence_seconds, m.trailing_silence_seconds,
+                   "s", "", DURATION_TOLERANCE_SECONDS),
+        Comparison("longest inner silence", r.longest_internal_silence_seconds, m.longest_internal_silence_seconds,
+                   "s", "", DURATION_TOLERANCE_SECONDS),
         Comparison("silent share", r.silent_ratio, m.silent_ratio, "", "", RATIO_TOLERANCE),
         Comparison("clipped share", r.clipped_sample_ratio, m.clipped_sample_ratio, "", "", RATIO_TOLERANCE),
     ]
@@ -340,7 +344,8 @@ def render(record: Record, measured: Measurements, audio_name: str) -> str:
     lines.append("-" * 76)
     if record.mastering:
         mst = record.mastering
-        source = "fell back to the fixed value" if mst.treble_dbfs is None else f"from the input 6-10kHz {mst.treble_dbfs:.1f}dBFS"
+        source = ("fell back to the fixed value" if mst.treble_dbfs is None
+                  else f"from the input 6-10kHz {mst.treble_dbfs:.1f}dBFS")
         lines.append(
             f"mastering: 6-10kHz threshold {mst.treble_threshold_dbfs:.1f}dBFS ({source})"
             f" / loudness gain {mst.loudness_gain_db:+.2f}dB"

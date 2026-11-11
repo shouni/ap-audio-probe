@@ -67,8 +67,8 @@ def test_absent_lines_stay_below_the_threshold(line):
 
 def test_threshold_sits_between_the_two_groups():
     """Pin, with margin, that the positive and negative cases sit on either side of the threshold."""
-    sung = min(_cov(l) for l in ["削ぎ落としたノイズを捨てろ", "境界をここに引け", "闇を裂き解き放て"])
-    absent = max(_cov(l) for l in ["夏の終わりに手を振った", "遠い街の冬を数えて"])
+    sung = min(_cov(line) for line in ["削ぎ落としたノイズを捨てろ", "境界をここに引け", "闇を裂き解き放て"])
+    absent = max(_cov(line) for line in ["夏の終わりに手を振った", "遠い街の冬を数えて"])
 
     assert absent < COVERAGE_THRESHOLD < sung
     assert sung - absent > 0.3
@@ -86,7 +86,7 @@ def test_check_reports_missing_lines_per_section():
     result = check([(chorus, HEARD)], recipe)
 
     assert len(result) == 1
-    assert [l.line for l in result[0].missing] == ["夏の終わりに手を振った"]
+    assert [check.line for check in result[0].missing] == ["夏の終わりに手を振った"]
 
 
 SR = 16000
@@ -148,7 +148,9 @@ def test_padding_reaches_outside_the_section():
 
 
 def test_a_neighbours_voice_does_not_make_a_silent_section_voiced():
-    """Voice is judged inside the section only. If a neighbour's held ending counted as voice, a fully dropped section would be missed."""
+    """Voice is judged inside the section only.
+
+    If a neighbour's held ending counted as voice, a fully dropped section would be missed."""
     audio = _clip(0.0, 2.0, seconds=12.0)  # 0-2 s is the neighbour's singing; from 2 s is the section under test
 
     assert trim_to_voice(audio, FLOOR, SR, start=2 * SR, end=len(audio)).size == 0

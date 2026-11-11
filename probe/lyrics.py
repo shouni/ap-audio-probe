@@ -81,7 +81,7 @@ class SectionCheck:
 
     @property
     def missing(self) -> list[LineCheck]:
-        return [l for l in self.lines if not l.sung]
+        return [check for check in self.lines if not check.sung]
 
 
 def trim_to_voice(

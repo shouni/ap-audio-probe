@@ -49,7 +49,8 @@ def _render(report: Report) -> str:
         f"or voiced for more than {ACTIVE_RATIO_THRESHOLD:.0%})",
     ]
     if any(s.bleed for s in report.stats):
-        lines.append("* \"edge bleed\" is voice reaching the edge from a neighbouring sung section (pickups and held endings).")
+        lines.append("* \"edge bleed\" is voice reaching the edge from a neighbouring sung section"
+                     " (pickups and held endings).")
     lines.append("")
     if report.violations:
         names = ", ".join(s.section.name for s in report.violations)
