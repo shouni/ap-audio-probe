@@ -9,8 +9,7 @@
 
 [English](README.md) | 日本語
 
-
-## 🎯 概要
+## 🚀 概要 (About) - 生成した曲が、レシピの指示どおりに鳴っているかを測る
 
 **AP Audio Probe** は、生成された楽曲が**レシピの指示どおりに鳴っているか**を測る検証ツールです。音源と `recipe.json` を突き合わせ、セクションごとに実際の音を測って報告します。
 
@@ -54,9 +53,7 @@ EDM の saw 系パッドやコードは、**歌声と同じ帯域に倍音ごと
 
 ---
 
-## 🚀 クイックスタート
-
-必要なもの: Python 3.14 / Google Cloud SDK（`gsutil`）/ ffmpeg（ラウドネス測定が呼びます）。
+## 🛠️ インストール
 
 ```bash
 python3 -m venv .venv
@@ -64,6 +61,14 @@ python3 -m venv .venv
 ```
 
 初回実行時に Demucs の学習済みモデル（約 300MB）が自動で取得されます。
+
+### 依存関係
+
+必要なもの: Python 3.14 / Google Cloud SDK（`gsutil`）/ ffmpeg（ラウドネス測定が呼びます）。
+
+---
+
+## 📦 使い方
 
 ### 実行（コピペ用）
 
@@ -100,9 +105,7 @@ gsutil cp gs://<bucket>/music/$JOB/assessment.json assessments/$JOB.json  # 任�
 - **ボーカル検出・歌詞の書き起こしなら mp3 で十分。** 判定に使う差が 25dB あるのに対し、符号化による差は 0.1dB 台で結論が動きません。
 - **マスタリング・配信の QC は `master.wav`。** mp3 は符号化で波形がオーバーシュートし、ピークが元より高く出ます。配信に出すのは wav なので、出荷物を測るという意味でもこちらです。
 
----
-
-## ⚙️ 引数
+### 引数
 
 ```
 python -m probe <audio> <recipe> [--out OUT] [--device DEVICE]
@@ -115,9 +118,7 @@ python -m probe <audio> <recipe> [--out OUT] [--device DEVICE]
 | `--out` | | `out` | 分離した stem の出力先 |
 | `--device` | | 自動 | Demucs の実行デバイス（`mps` / `cpu` / `cuda`）。省略時は使えるものを mps → cuda → cpu の順で選びます |
 
----
-
-## 📊 出力の読み方
+### 📊 出力の読み方
 
 ```
 Split the Role  /  126 BPM
@@ -143,7 +144,7 @@ Outro      インスト   160-174.3s           -44.5dB   -25.5dB     4%  クリ�
 
 ---
 
-## 🧪 検出力と、その限界
+## 🔬 検出力と、その限界
 
 クリーンな曲を測って「違反なし」と出ても、それは検出できることの証明にはなりません。何を渡しても「クリーン」を返す実装でも同じ結果になるためです。
 
@@ -317,7 +318,7 @@ Chorus     38-74s             -3.4dB    31.3s
 
 ---
 
-## ✅ テスト
+## 🧪 テスト
 
 ```bash
 .venv/bin/pytest

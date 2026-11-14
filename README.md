@@ -9,7 +9,7 @@
 
 English | [日本語](README.ja.md)
 
-## 🎯 Overview
+## 🚀 About - measuring whether a generated song plays as its recipe instructs
 
 **AP Audio Probe** is a verification tool that measures whether a generated song **plays as its recipe instructs**. It lines the audio up with `recipe.json`, measures the actual sound section by section, and reports.
 
@@ -53,9 +53,7 @@ Violations are not failures; it returns the numbers and the reasons. Quality pro
 
 ---
 
-## 🚀 Quick start
-
-Requirements: Python 3.14 / Google Cloud SDK (`gsutil`) / ffmpeg (used by the loudness measurement).
+## 🛠️ Install
 
 ```bash
 python3 -m venv .venv
@@ -63,6 +61,14 @@ python3 -m venv .venv
 ```
 
 The first run downloads Demucs's pretrained model (about 300MB).
+
+### Dependencies
+
+Requirements: Python 3.14 / Google Cloud SDK (`gsutil`) / ffmpeg (used by the loudness measurement).
+
+---
+
+## 📦 Usage
 
 ### Run (copy and paste)
 
@@ -99,9 +105,7 @@ Measured differences (a song from 2026-08, when the limiter ceiling was −1 dBF
 - **For vocal detection and lyric transcription, the mp3 is enough.** The verdict relies on a 25dB gap, while encoding changes things by around 0.1dB.
 - **For mastering and distribution QC, use `master.wav`.** mp3 encoding overshoots the waveform, so peaks read higher than the source. The wav is what gets distributed, so it is also the product being shipped.
 
----
-
-## ⚙️ Arguments
+### Arguments
 
 ```
 python -m probe <audio> <recipe> [--out OUT] [--device DEVICE]
@@ -114,9 +118,7 @@ python -m probe <audio> <recipe> [--out OUT] [--device DEVICE]
 | `--out` | | `out` | Where separated stems are written |
 | `--device` | | auto | Demucs device (`mps` / `cpu` / `cuda`). Without it, picks the first available of mps → cuda → cpu |
 
----
-
-## 📊 Reading the output
+### 📊 Reading the output
 
 ```
 Split the Role  /  126 BPM
@@ -142,7 +144,7 @@ reference level of the sung sections: -20.3 dBFS ("vocals" when within 12dB of i
 
 ---
 
-## 🧪 Detection power and its limits
+## 🔬 Detection power and its limits
 
 Measuring a clean song and getting "no violations" does not prove anything can be detected; an implementation that returns "clean" for any input would give the same result.
 
@@ -316,7 +318,7 @@ The method is reimplemented to match the generator's `inspector.go` (one channel
 
 ---
 
-## ✅ Tests
+## 🧪 Tests
 
 ```bash
 .venv/bin/pytest
